@@ -1,0 +1,7 @@
+/* App.css - lightweight wrapper that imports the shared styles */
+@import './styles/index.css';
+
+/* App-level overrides can go here */
+.app {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial;
+}

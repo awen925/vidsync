@@ -1,0 +1,17 @@
+.DS_Store
+*.log
+node_modules/
+dist/
+build/
+*.exe
+*.dmg
+*.zip
+.env
+.env.local
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.cache/
+coverage/

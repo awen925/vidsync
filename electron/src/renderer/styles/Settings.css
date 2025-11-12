@@ -1,0 +1,78 @@
+.settings-container {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 30px;
+}
+
+.settings-container h1 {
+  font-size: 28px;
+  color: #333;
+  margin-bottom: 30px;
+}
+
+.settings-section {
+  background: white;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 20px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.settings-section h2 {
+  font-size: 18px;
+  color: #333;
+  margin-bottom: 20px;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 10px;
+}
+
+.setting-item {
+  margin-bottom: 20px;
+  display: flex;
+  flex-direction: column;
+}
+
+.setting-item label {
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+
+.setting-item input[type="text"],
+.setting-item input[type="email"],
+.setting-item select {
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.setting-item input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+}
+
+.path-input {
+  display: flex;
+  gap: 10px;
+}
+
+.path-input input {
+  flex: 1;
+}
+
+.path-input button {
+  flex-shrink: 0;
+  padding: 10px 20px;
+  background-color: #007aff;
+  color: white;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.path-input button:hover {
+  background-color: #0051d5;
+}

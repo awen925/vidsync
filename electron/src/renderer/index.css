@@ -1,0 +1,7 @@
+/* index.css - import the shared styles so CRA finds ./index.css */
+@import './styles/index.css';
+
+/* App root element styling */
+#root, .app {
+  height: 100%;
+}
