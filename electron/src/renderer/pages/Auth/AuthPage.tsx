@@ -21,6 +21,19 @@ const AuthPage: React.FC = () => {
       if (token) {
         setAccessToken(token);
         localStorage.setItem('token', token);
+
+        // Register device with cloud after successful login
+        try {
+          const deviceInfo = await (window as any).api.deviceGetInfo();
+          await cloudAPI.post('/devices/register', {
+            deviceId: deviceInfo.deviceId,
+            deviceName: deviceInfo.deviceName,
+            platform: deviceInfo.platform,
+          });
+        } catch (regErr) {
+          console.warn('Device registration failed:', regErr);
+        }
+
         navigate('/dashboard');
       } else {
         setError('Invalid login response');
@@ -42,6 +55,19 @@ const AuthPage: React.FC = () => {
       if (token) {
         setAccessToken(token);
         localStorage.setItem('token', token);
+
+        // Register device with cloud after signup
+        try {
+          const deviceInfo = await (window as any).api.deviceGetInfo();
+          await cloudAPI.post('/devices/register', {
+            deviceId: deviceInfo.deviceId,
+            deviceName: deviceInfo.deviceName,
+            platform: deviceInfo.platform,
+          });
+        } catch (regErr) {
+          console.warn('Device registration failed:', regErr);
+        }
+
         navigate('/dashboard');
       } else {
         setError('Signup succeeded but no token returned');

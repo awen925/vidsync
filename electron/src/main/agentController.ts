@@ -8,6 +8,8 @@ export class AgentController {
   private process: ChildProcess | null = null;
   private isRunning = false;
   private resolvedPath: string | null = null;
+  private nebulaProcess: ChildProcess | null = null;
+  private syncthingProcess: ChildProcess | null = null;
 
   private resolveBinaryPath(): string {
     const binaryName = platform() === 'win32' ? 'vidsync-agent.exe' : 'vidsync-agent';
@@ -109,6 +111,74 @@ export class AgentController {
     });
   }
 
+  async startNebula(): Promise<boolean> {
+    if (this.nebulaProcess) return true;
+
+    const binaryName = process.platform === 'win32' ? 'nebula.exe' : 'nebula';
+    const candidates = [
+      path.join(process.cwd(), 'go-agent', 'bin', 'nebula', binaryName),
+      path.join(process.cwd(), 'bin', 'nebula', binaryName),
+      binaryName,
+    ];
+
+    for (const c of candidates) {
+      try {
+        const proc = spawn(c, ['-version'], { stdio: 'ignore' });
+        proc.on('error', () => {});
+        // If spawn didn't throw immediately, assume binary exists and try start with config
+        // Note: Nebula will look for config in standard locations; we don't pass a config here.
+        const p = spawn(c, [], { detached: false, stdio: ['ignore', 'pipe', 'pipe'] });
+        p.stdout?.on('data', (d) => console.log(`[Nebula] ${d.toString()}`));
+        p.stderr?.on('data', (d) => console.error(`[Nebula Error] ${d.toString()}`));
+        p.on('exit', (code, sig) => {
+          console.log(`[Nebula] exited code=${code} sig=${sig}`);
+          this.nebulaProcess = null;
+        });
+        this.nebulaProcess = p;
+        console.log('Nebula started via', c);
+        return true;
+      } catch (e) {
+        // try next
+      }
+    }
+
+    console.warn('Nebula binary not found in candidates');
+    return false;
+  }
+
+  async startSyncthing(): Promise<boolean> {
+    if (this.syncthingProcess) return true;
+
+    const binaryName = process.platform === 'win32' ? 'syncthing.exe' : 'syncthing';
+    const candidates = [
+      path.join(process.cwd(), 'go-agent', 'bin', 'syncthing', binaryName),
+      path.join(process.cwd(), 'bin', 'syncthing', binaryName),
+      binaryName,
+    ];
+
+    for (const c of candidates) {
+      try {
+        const proc = spawn(c, ['--version'], { stdio: 'ignore' });
+        proc.on('error', () => {});
+        const p = spawn(c, [], { detached: false, stdio: ['ignore', 'pipe', 'pipe'] });
+        p.stdout?.on('data', (d) => console.log(`[Syncthing] ${d.toString()}`));
+        p.stderr?.on('data', (d) => console.error(`[Syncthing Error] ${d.toString()}`));
+        p.on('exit', (code, sig) => {
+          console.log(`[Syncthing] exited code=${code} sig=${sig}`);
+          this.syncthingProcess = null;
+        });
+        this.syncthingProcess = p;
+        console.log('Syncthing started via', c);
+        return true;
+      } catch (e) {
+        // try next
+      }
+    }
+
+    console.warn('Syncthing binary not found in candidates');
+    return false;
+  }
+
   stop(): Promise<boolean> {
     return new Promise((resolve) => {
       if (!this.process) {
@@ -133,6 +203,8 @@ export class AgentController {
       running: this.isRunning,
       pid: this.process?.pid || null,
       path: this.resolvedPath,
+      nebula: { pid: this.nebulaProcess?.pid || null, running: !!this.nebulaProcess },
+      syncthing: { pid: this.syncthingProcess?.pid || null, running: !!this.syncthingProcess },
     };
   }
 }

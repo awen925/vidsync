@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('api', {
   agentStart: () => ipcRenderer.invoke('agent:start'),
   agentStop: () => ipcRenderer.invoke('agent:stop'),
   agentStatus: () => ipcRenderer.invoke('agent:status'),
+  deviceGetInfo: () => ipcRenderer.invoke('device:getInfo'),
 });
 
 export {};

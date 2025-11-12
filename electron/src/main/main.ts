@@ -1,5 +1,8 @@
 import { app, BrowserWindow, Menu, ipcMain } from 'electron';
 import path from 'path';
+import fs from 'fs';
+import os from 'os';
+import crypto from 'crypto';
 import { AgentController } from './agentController';
 
 let mainWindow: BrowserWindow | null;
@@ -38,6 +41,9 @@ app.on('ready', () => {
   createWindow();
   setupIPC();
   agentController.start();
+  // Attempt to start Nebula and Syncthing services as part of app startup
+  agentController.startNebula();
+  agentController.startSyncthing();
 });
 
 app.on('window-all-closed', () => {
@@ -66,6 +72,36 @@ const setupIPC = () => {
   ipcMain.handle('agent:start', () => agentController.start());
   ipcMain.handle('agent:stop', () => agentController.stop());
   ipcMain.handle('agent:status', () => agentController.getStatus());
+
+  // Device info: create or return a local device identity stored in userData
+  ipcMain.handle('device:getInfo', async () => {
+    try {
+      const dataDir = app.getPath('userData');
+      const file = path.join(dataDir, 'device.json');
+      try {
+        const existing = await fs.promises.readFile(file, 'utf8');
+        return JSON.parse(existing);
+      } catch (err) {
+        // create new
+        const id = (crypto && (crypto as any).randomUUID) ? (crypto as any).randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+        const info = {
+          deviceId: id,
+          deviceName: `${os.hostname()}-${process.platform}`,
+          platform: process.platform,
+        };
+        try {
+          await fs.promises.mkdir(dataDir, { recursive: true });
+          await fs.promises.writeFile(file, JSON.stringify(info, null, 2), 'utf8');
+        } catch (werr) {
+          console.warn('Failed to persist device info:', werr);
+        }
+        return info;
+      }
+    } catch (ex) {
+      console.error('device:getInfo error', ex);
+      return { deviceId: `tmp-${Date.now()}`, deviceName: `tmp-${process.platform}`, platform: process.platform };
+    }
+  });
 };
 
 const template: any[] = [
