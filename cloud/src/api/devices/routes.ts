@@ -20,12 +20,17 @@ router.post('/register', authMiddleware, async (req: Request, res: Response) => 
     const token = deviceToken || `${deviceId}-${Date.now()}`;
 
     // Check if device already exists for this user+deviceId
-    const { data: existing } = await supabase
+    const { data: existing, error: selectErr } = await supabase
       .from('devices')
       .select('id')
       .eq('user_id', userId)
-      .eq('device_id', deviceId)
-      .single();
+      .eq('device_id', deviceId);
+
+    if (selectErr && (selectErr as any).code !== 'PGRST116') {
+      // PGRST116 = no rows found (not an error)
+      console.error('Failed to check existing device:', selectErr.message);
+      return res.status(500).json({ error: 'Failed to register device' });
+    }
 
     const payload = {
       user_id: userId,
@@ -41,12 +46,13 @@ router.post('/register', authMiddleware, async (req: Request, res: Response) => 
 
     let data, error;
     
-    if (existing && existing.id) {
+    if (existing && existing.length > 0) {
       // Update existing device
       const { data: updated, error: updateErr } = await supabase
         .from('devices')
         .update(payload)
-        .eq('id', existing.id)
+        .eq('user_id', userId)
+        .eq('device_id', deviceId)
         .select()
         .single();
       data = updated;

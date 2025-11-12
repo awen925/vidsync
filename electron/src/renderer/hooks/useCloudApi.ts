@@ -1,23 +1,25 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
+import { supabase } from '../lib/supabaseClient';
 
 const API_BASE_URL = 'http://127.0.0.1:29999/v1';
 let accessToken: string | null = null;
-// initialize from localStorage so refreshes keep auth
-try {
-  const stored = localStorage.getItem('token');
-  if (stored) accessToken = stored;
-} catch (e) {
-  // ignore (not available in some contexts)
-}
 
 export const agentAPI: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
   timeout: 10000,
 });
 
-agentAPI.interceptors.request.use((config) => {
-  if (accessToken) {
-    config.headers.Authorization = `Bearer ${accessToken}`;
+agentAPI.interceptors.request.use(async (config) => {
+  try {
+    // get latest session from supabase client (handles refresh automatically)
+    const { data } = await supabase.auth.getSession();
+    const token = data?.session?.access_token;
+    if (token) {
+      config.headers = config.headers || {};
+      (config.headers as any).Authorization = `Bearer ${token}`;
+    }
+  } catch (e) {
+    // ignore and proceed without token
   }
   return config;
 });
@@ -26,8 +28,15 @@ agentAPI.interceptors.response.use(
   (response) => response,
   (error: AxiosError) => {
     if (error.response?.status === 401) {
-      // Token expired, clear it
+      // Token expired or invalid - clear it and force re-authentication
       accessToken = null;
+      try {
+        localStorage.removeItem('token');
+      } catch (e) {}
+      // Redirect to auth page so user can sign in again (will mount the login UI)
+      try {
+        if (typeof window !== 'undefined') window.location.href = '/auth';
+      } catch (e) {}
     }
     return Promise.reject(error);
   }
@@ -35,6 +44,9 @@ agentAPI.interceptors.response.use(
 
 export const setAccessToken = (token: string) => {
   accessToken = token;
+  try {
+    localStorage.setItem('token', token);
+  } catch (e) {}
 };
 
 export const cloudAPI: AxiosInstance = axios.create({
@@ -42,11 +54,33 @@ export const cloudAPI: AxiosInstance = axios.create({
   timeout: 10000,
 });
 
-cloudAPI.interceptors.request.use((config) => {
-  if (accessToken) {
-    config.headers.Authorization = `Bearer ${accessToken}`;
-  }
+cloudAPI.interceptors.request.use(async (config) => {
+  try {
+    const { data } = await supabase.auth.getSession();
+    const token = data?.session?.access_token;
+    if (token) {
+      config.headers = config.headers || {};
+      (config.headers as any).Authorization = `Bearer ${token}`;
+    }
+  } catch (e) {}
   return config;
 });
+
+cloudAPI.interceptors.response.use(
+  (response) => response,
+  (error: AxiosError) => {
+    if (error.response?.status === 401) {
+      // Clear stored token and redirect to login
+      accessToken = null;
+      try {
+        localStorage.removeItem('token');
+      } catch (e) {}
+      try {
+        if (typeof window !== 'undefined') window.location.href = '/auth';
+      } catch (e) {}
+    }
+    return Promise.reject(error);
+  }
+);
 
 export default agentAPI;

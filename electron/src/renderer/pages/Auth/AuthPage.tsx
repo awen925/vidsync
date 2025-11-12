@@ -1,6 +1,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { cloudAPI, setAccessToken } from '../../hooks/useCloudApi';
+import { supabase } from '../../lib/supabaseClient';
 import logo from '../../assets/logo.svg';
 
 interface Toast {
@@ -32,11 +33,28 @@ const AuthPage: React.FC = () => {
     setIsLoading(true);
     setError('');
     try {
-      const response = await cloudAPI.post('/auth/login', { email, password });
-      const token = response.data?.token;
+      // Use Supabase client in the renderer so it can manage refresh tokens
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) {
+        setError(error.message || 'Login failed');
+        setIsLoading(false);
+        return;
+      }
+
+      // supabase client will persist session and refresh tokens
+      const token = (data as any)?.session?.access_token;
       if (token) {
         setAccessToken(token);
-        localStorage.setItem('token', token);
+
+        // Persist refresh token securely in main process
+        try {
+          const refreshToken = (data as any).session?.refresh_token;
+          if (refreshToken && (window as any).api?.secureStore?.setRefreshToken) {
+            await (window as any).api.secureStore.setRefreshToken(refreshToken);
+          }
+        } catch (e) {
+          console.warn('Failed to persist refresh token in secure store:', e);
+        }
 
         // Register device with cloud after successful login
         try {
@@ -58,7 +76,7 @@ const AuthPage: React.FC = () => {
         setError('Invalid login response');
       }
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Login failed');
+      setError(err.message || err.response?.data?.error || 'Login failed');
     } finally {
       setIsLoading(false);
     }
@@ -69,13 +87,29 @@ const AuthPage: React.FC = () => {
     setIsLoading(true);
     setError('');
     try {
-      const response = await cloudAPI.post('/auth/signup', { email, password });
-      const token = response.data?.token;
+      // Use Supabase client signUp to create account and session
+      const { data, error } = await supabase.auth.signUp({ email, password });
+      if (error) {
+        setError(error.message || 'Signup failed');
+        setIsLoading(false);
+        return;
+      }
+
+      // If signUp provided a session, use it; otherwise show message
+      const token = (data as any)?.session?.access_token;
       if (token) {
         setAccessToken(token);
-        localStorage.setItem('token', token);
 
-        // Register device with cloud after signup
+        // Persist refresh token securely in main process
+        try {
+          const refreshToken = (data as any).session?.refresh_token;
+          if (refreshToken && (window as any).api?.secureStore?.setRefreshToken) {
+            await (window as any).api.secureStore.setRefreshToken(refreshToken);
+          }
+        } catch (e) {
+          console.warn('Failed to persist refresh token in secure store:', e);
+        }
+
         try {
           const deviceInfo = await (window as any).api.deviceGetInfo();
           await cloudAPI.post('/devices/register', {
@@ -92,10 +126,10 @@ const AuthPage: React.FC = () => {
 
         navigate('/dashboard');
       } else {
-        setError('Signup succeeded but no token returned');
+        setError('Signup succeeded. Please check your email to confirm.');
       }
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Signup failed');
+      setError(err.message || err.response?.data?.error || 'Signup failed');
     } finally {
       setIsLoading(false);
     }

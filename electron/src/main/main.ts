@@ -156,6 +156,37 @@ const setupIPC = () => {
       return { deviceId: `tmp-${Date.now()}`, deviceName: `tmp-${process.platform}`, platform: process.platform };
     }
   });
+
+  // Secure storage for refresh tokens (stored in app userData with restrictive permissions)
+  const refreshFile = path.join(app.getPath('userData'), 'refresh_token.json');
+
+  ipcMain.handle('secureStore:set', async (_ev, token: string) => {
+    try {
+      await fs.promises.mkdir(path.dirname(refreshFile), { recursive: true });
+      await fs.promises.writeFile(refreshFile, JSON.stringify({ token }), { mode: 0o600 });
+      try { await fs.promises.chmod(refreshFile, 0o600); } catch (e) {}
+      return { ok: true };
+    } catch (e: any) {
+      console.error('secureStore:set error', e);
+      return { ok: false, error: e?.message || String(e) };
+    }
+  });
+
+  ipcMain.handle('secureStore:get', async () => {
+    try {
+      const data = await fs.promises.readFile(refreshFile, 'utf8');
+      const parsed = JSON.parse(data || '{}');
+      return { token: parsed.token || null };
+    } catch (e: any) {
+      return { token: null };
+    }
+  });
+
+  ipcMain.handle('secureStore:clear', async () => {
+    try { await fs.promises.unlink(refreshFile); } catch (e) {}
+    return { ok: true };
+  });
+
 };
 
 const template: any[] = [

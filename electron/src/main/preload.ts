@@ -10,6 +10,12 @@ contextBridge.exposeInMainWorld('api', {
   syncthingStopForProject: (projectId: string) => ipcRenderer.invoke('syncthing:stopForProject', projectId),
   syncthingStatusForProject: (projectId: string) => ipcRenderer.invoke('syncthing:statusForProject', projectId),
   fsListDir: (dirPath: string) => ipcRenderer.invoke('fs:listDir', dirPath),
+  // Secure store wrappers
+  secureStore: {
+    setRefreshToken: (token: string) => ipcRenderer.invoke('secureStore:set', token),
+    getRefreshToken: () => ipcRenderer.invoke('secureStore:get'),
+    clearRefreshToken: () => ipcRenderer.invoke('secureStore:clear'),
+  },
 });
 
 export {};

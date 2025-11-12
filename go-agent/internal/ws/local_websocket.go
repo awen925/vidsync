@@ -147,6 +147,14 @@ func (ws *WebSocketServer) clientWriter(client *Client) {
 }
 
 func (ws *WebSocketServer) handleStatus(w http.ResponseWriter, r *http.Request) {
+	// CORS support for dev (renderer dev server calling local agent)
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 
 	status := map[string]interface{}{
@@ -158,6 +166,14 @@ func (ws *WebSocketServer) handleStatus(w http.ResponseWriter, r *http.Request) 
 }
 
 func (ws *WebSocketServer) handleDevice(w http.ResponseWriter, r *http.Request) {
+	// CORS support for dev
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 
 	if ws.deviceMgr == nil {
