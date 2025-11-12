@@ -2,6 +2,13 @@ import axios, { AxiosInstance, AxiosError } from 'axios';
 
 const API_BASE_URL = 'http://127.0.0.1:29999/v1';
 let accessToken: string | null = null;
+// initialize from localStorage so refreshes keep auth
+try {
+  const stored = localStorage.getItem('token');
+  if (stored) accessToken = stored;
+} catch (e) {
+  // ignore (not available in some contexts)
+}
 
 export const agentAPI: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
