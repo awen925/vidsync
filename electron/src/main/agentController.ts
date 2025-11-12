@@ -116,7 +116,9 @@ export class AgentController {
 
     const binaryName = process.platform === 'win32' ? 'nebula.exe' : 'nebula';
     const candidates = [
-      path.join(__dirname, '..', '..', 'go-agent', 'bin', 'nebula', binaryName),
+      path.resolve(__dirname, '..', '..', '..', 'go-agent', 'bin', 'nebula', binaryName),
+      path.resolve(process.cwd(), '..', 'go-agent', 'bin', 'nebula', binaryName),
+      path.join(process.cwd(), 'go-agent', 'bin', 'nebula', binaryName),
       binaryName,
     ];
 
@@ -165,7 +167,9 @@ export class AgentController {
 
     const binaryName = process.platform === 'win32' ? 'syncthing.exe' : 'syncthing';
     const candidates = [
-      path.join(__dirname, '..', '..', 'go-agent', 'bin', 'syncthing', binaryName),
+      path.resolve(__dirname, '..', '..', '..', 'go-agent', 'bin', 'syncthing', binaryName),
+      path.resolve(process.cwd(), '..', 'go-agent', 'bin', 'syncthing', binaryName),
+      path.join(process.cwd(), 'go-agent', 'bin', 'syncthing', binaryName),
       binaryName,
     ];
 
