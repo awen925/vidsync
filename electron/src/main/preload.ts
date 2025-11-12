@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('api', {
   syncthingStartForProject: (projectId: string, localPath?: string) => ipcRenderer.invoke('syncthing:startForProject', { projectId, localPath }),
   syncthingStopForProject: (projectId: string) => ipcRenderer.invoke('syncthing:stopForProject', projectId),
   syncthingStatusForProject: (projectId: string) => ipcRenderer.invoke('syncthing:statusForProject', projectId),
+  fsListDir: (dirPath: string) => ipcRenderer.invoke('fs:listDir', dirPath),
 });
 
 export {};

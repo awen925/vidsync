@@ -72,6 +72,17 @@ const setupIPC = () => {
     return result.filePaths[0];
   });
 
+  // FS: list directory contents (non-recursive)
+  ipcMain.handle('fs:listDir', async (_ev, dirPath: string) => {
+    try {
+      const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
+      const out = entries.map((e) => ({ name: e.name, isDirectory: e.isDirectory() }));
+      return { path: dirPath, entries: out };
+    } catch (e: any) {
+      return { error: e?.message || String(e) };
+    }
+  });
+
   // Agent control
   ipcMain.handle('agent:start', () => agentController.start());
   ipcMain.handle('agent:stop', () => agentController.stop());

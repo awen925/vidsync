@@ -257,4 +257,35 @@ router.delete('/:projectId/devices/:deviceId', authMiddleware, async (req: Reque
   }
 });
 
+// GET /api/projects/:projectId/sync-events?file=<file>&limit=1
+router.get('/:projectId/sync-events', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { projectId } = req.params;
+    const { file, limit } = req.query;
+
+    let q = supabase.from('sync_events').select('*').eq('project_id', projectId).order('created_at', { ascending: false });
+    if (file && typeof file === 'string') {
+      q = q.eq('file_path', file);
+    }
+
+    if (limit) {
+      const n = parseInt(String(limit), 10) || 10;
+      q = (q as any).limit(n);
+    } else {
+      q = (q as any).limit(50);
+    }
+
+    const { data, error } = await q;
+    if (error) {
+      console.error('Failed to fetch sync events:', error.message);
+      return res.status(500).json({ error: 'Failed to fetch sync events' });
+    }
+
+    res.json({ events: data || [] });
+  } catch (error) {
+    console.error('Sync events exception:', error);
+    res.status(500).json({ error: 'Failed to fetch sync events' });
+  }
+});
+
 export default router;
