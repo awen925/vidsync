@@ -35,8 +35,8 @@ export class AgentController {
     // ../../.. from compiled main (dist/main) -> project root
     candidates.push(path.join(__dirname, '..', '..', '..', 'go-agent', binaryName));
     candidates.push(path.join(process.cwd(), 'go-agent', binaryName));
-    candidates.push(path.join(process.cwd(), 'electron', 'bin', binaryName));
     candidates.push(path.join(process.cwd(), 'bin', binaryName));
+    candidates.push(path.join(process.cwd(), 'electron', 'bin', binaryName));
 
     // 4) Fallback to `bin` next to resources (useful in many dev layouts)
     candidates.push(path.join(process.resourcesPath || '', 'bin', binaryName));
@@ -116,6 +116,7 @@ export class AgentController {
 
     const binaryName = process.platform === 'win32' ? 'nebula.exe' : 'nebula';
     const candidates = [
+      path.join(__dirname, '..', '..', '..', 'go-agent', 'bin', 'nebula', binaryName),
       path.join(process.cwd(), 'go-agent', 'bin', 'nebula', binaryName),
       path.join(process.cwd(), 'bin', 'nebula', binaryName),
       binaryName,
@@ -162,6 +163,7 @@ export class AgentController {
 
     const binaryName = process.platform === 'win32' ? 'syncthing.exe' : 'syncthing';
     const candidates = [
+      path.join(__dirname, '..', '..', '..', 'go-agent', 'bin', 'syncthing', binaryName),
       path.join(process.cwd(), 'go-agent', 'bin', 'syncthing', binaryName),
       path.join(process.cwd(), 'bin', 'syncthing', binaryName),
       binaryName,
