@@ -6,6 +6,9 @@ contextBridge.exposeInMainWorld('api', {
   agentStop: () => ipcRenderer.invoke('agent:stop'),
   agentStatus: () => ipcRenderer.invoke('agent:status'),
   deviceGetInfo: () => ipcRenderer.invoke('device:getInfo'),
+  syncthingStartForProject: (projectId: string, localPath?: string) => ipcRenderer.invoke('syncthing:startForProject', { projectId, localPath }),
+  syncthingStopForProject: (projectId: string) => ipcRenderer.invoke('syncthing:stopForProject', projectId),
+  syncthingStatusForProject: (projectId: string) => ipcRenderer.invoke('syncthing:statusForProject', projectId),
 });
 
 export {};

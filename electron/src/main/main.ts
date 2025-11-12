@@ -6,9 +6,11 @@ import crypto from 'crypto';
 import https from 'https';
 import http from 'http';
 import { AgentController } from './agentController';
+import { SyncthingManager } from './syncthingManager';
 
 let mainWindow: BrowserWindow | null;
 const agentController = new AgentController();
+const syncthingManager = new SyncthingManager();
 
 const isDev = process.env.NODE_ENV === 'development';
 const isMac = process.platform === 'darwin';
@@ -74,6 +76,19 @@ const setupIPC = () => {
   ipcMain.handle('agent:start', () => agentController.start());
   ipcMain.handle('agent:stop', () => agentController.stop());
   ipcMain.handle('agent:status', () => agentController.getStatus());
+
+  // Syncthing per-project control
+  ipcMain.handle('syncthing:startForProject', async (_ev, { projectId, localPath }) => {
+    return syncthingManager.startForProject(projectId, localPath);
+  });
+
+  ipcMain.handle('syncthing:stopForProject', async (_ev, projectId: string) => {
+    return syncthingManager.stopForProject(projectId);
+  });
+
+  ipcMain.handle('syncthing:statusForProject', async (_ev, projectId: string) => {
+    return syncthingManager.getStatusForProject(projectId);
+  });
 
   // Device info: create or return a local device identity stored in userData
   ipcMain.handle('device:getInfo', async () => {
