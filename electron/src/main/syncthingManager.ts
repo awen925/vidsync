@@ -15,10 +15,7 @@ export class SyncthingManager {
   private resolveBinary(): string {
     const binaryName = process.platform === 'win32' ? 'syncthing.exe' : 'syncthing';
     const candidates = [
-      path.join(__dirname, '..', '..', '..', 'go-agent', 'bin', 'syncthing', binaryName),
-      path.join(process.cwd(), 'go-agent', 'bin', 'syncthing', binaryName),
-      path.join(process.cwd(), 'bin', 'syncthing', binaryName),
-      path.join(process.resourcesPath || '', 'bin', 'syncthing', binaryName),
+      path.join(__dirname, '..', '..', 'go-agent', 'bin', 'syncthing', binaryName),
       binaryName,
     ];
 

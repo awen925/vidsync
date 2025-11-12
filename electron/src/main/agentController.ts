@@ -116,19 +116,21 @@ export class AgentController {
 
     const binaryName = process.platform === 'win32' ? 'nebula.exe' : 'nebula';
     const candidates = [
-      path.join(__dirname, '..', '..', '..', 'go-agent', 'bin', 'nebula', binaryName),
-      path.join(process.cwd(), 'go-agent', 'bin', 'nebula', binaryName),
-      path.join(process.cwd(), 'bin', 'nebula', binaryName),
+      path.join(__dirname, '..', '..', 'go-agent', 'bin', 'nebula', binaryName),
       binaryName,
     ];
+
+    console.log(`[Nebula] __dirname=${__dirname}, candidates=${JSON.stringify(candidates)}`);
 
     for (const c of candidates) {
       try {
         // Check if binary exists before spawning (except for PATH-only binary names)
         if (c !== binaryName && !fs.existsSync(c)) {
+          console.log(`[Nebula] candidate not found: ${c}`);
           continue; // try next candidate
         }
 
+        console.log(`[Nebula] attempting to spawn from: ${c}`);
         // Note: Nebula will look for config in standard locations; we don't pass a config here.
         const p = spawn(c, [], { detached: false, stdio: ['ignore', 'pipe', 'pipe'] });
         let errorOccurred = false;
@@ -163,19 +165,21 @@ export class AgentController {
 
     const binaryName = process.platform === 'win32' ? 'syncthing.exe' : 'syncthing';
     const candidates = [
-      path.join(__dirname, '..', '..', '..', 'go-agent', 'bin', 'syncthing', binaryName),
-      path.join(process.cwd(), 'go-agent', 'bin', 'syncthing', binaryName),
-      path.join(process.cwd(), 'bin', 'syncthing', binaryName),
+      path.join(__dirname, '..', '..', 'go-agent', 'bin', 'syncthing', binaryName),
       binaryName,
     ];
+
+    console.log(`[Syncthing] __dirname=${__dirname}, candidates=${JSON.stringify(candidates)}`);
 
     for (const c of candidates) {
       try {
         // Check if binary exists before spawning (except for PATH-only binary names)
         if (c !== binaryName && !fs.existsSync(c)) {
+          console.log(`[Syncthing] candidate not found: ${c}`);
           continue; // try next candidate
         }
 
+        console.log(`[Syncthing] attempting to spawn from: ${c}`);
         const p = spawn(c, [], { detached: false, stdio: ['ignore', 'pipe', 'pipe'] });
         let errorOccurred = false;
         p.on('error', (err) => {
