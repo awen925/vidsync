@@ -19,6 +19,14 @@ router.post('/register', authMiddleware, async (req: Request, res: Response) => 
     // Use provided deviceToken or generate a simple one
     const token = deviceToken || `${deviceId}-${Date.now()}`;
 
+    // Check if device already exists for this user+deviceId
+    const { data: existing } = await supabase
+      .from('devices')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('device_id', deviceId)
+      .single();
+
     const payload = {
       user_id: userId,
       device_id: deviceId,
@@ -31,7 +39,28 @@ router.post('/register', authMiddleware, async (req: Request, res: Response) => 
       last_seen: new Date().toISOString(),
     };
 
-    const { data, error } = await supabase.from('devices').insert(payload).select().single();
+    let data, error;
+    
+    if (existing && existing.id) {
+      // Update existing device
+      const { data: updated, error: updateErr } = await supabase
+        .from('devices')
+        .update(payload)
+        .eq('id', existing.id)
+        .select()
+        .single();
+      data = updated;
+      error = updateErr;
+    } else {
+      // Insert new device
+      const { data: inserted, error: insertErr } = await supabase
+        .from('devices')
+        .insert(payload)
+        .select()
+        .single();
+      data = inserted;
+      error = insertErr;
+    }
 
     if (error) {
       console.error('Failed to persist device:', error.message);
