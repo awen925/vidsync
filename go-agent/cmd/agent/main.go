@@ -45,7 +45,7 @@ func main() {
 	syncMgr := sync.NewSyncManager(cfg.DataDir, logger)
 
 	// Initialize WebSocket server
-	wsServer := ws.NewWebSocketServer(":29999", logger)
+	wsServer := ws.NewWebSocketServer(":29999", logger, deviceMgr)
 
 	// Register event handlers
 	syncMgr.OnEvent(func(evt sync.Event) {

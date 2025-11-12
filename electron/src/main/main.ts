@@ -3,6 +3,8 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import crypto from 'crypto';
+import https from 'https';
+import http from 'http';
 import { AgentController } from './agentController';
 
 let mainWindow: BrowserWindow | null;
@@ -76,6 +78,32 @@ const setupIPC = () => {
   // Device info: create or return a local device identity stored in userData
   ipcMain.handle('device:getInfo', async () => {
     try {
+      // Try to fetch from running agent first
+      const agentInfo = await new Promise((resolve) => {
+        const req = http.get('http://127.0.0.1:29999/v1/device', (res) => {
+          let data = '';
+          res.on('data', (chunk) => (data += chunk));
+          res.on('end', () => {
+            try {
+              resolve(JSON.parse(data));
+            } catch (e) {
+              resolve(null);
+            }
+          });
+        });
+        req.on('error', () => resolve(null));
+        req.setTimeout(2000, () => {
+          req.destroy();
+          resolve(null);
+        });
+      });
+
+      if (agentInfo && (agentInfo as any).deviceId) {
+        console.log('Device info from agent:', agentInfo);
+        return agentInfo;
+      }
+
+      // Fallback: create local device identity
       const dataDir = app.getPath('userData');
       const file = path.join(dataDir, 'device.json');
       try {
@@ -83,7 +111,7 @@ const setupIPC = () => {
         return JSON.parse(existing);
       } catch (err) {
         // create new
-        const id = (crypto && (crypto as any).randomUUID) ? (crypto as any).randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+        const id = (crypto && (crypto as any).randomUUID) ? (crypto as any).randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         const info = {
           deviceId: id,
           deviceName: `${os.hostname()}-${process.platform}`,

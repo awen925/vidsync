@@ -3,6 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import { cloudAPI, setAccessToken } from '../../hooks/useCloudApi';
 import logo from '../../assets/logo.svg';
 
+interface Toast {
+  id: string;
+  message: string;
+  type: 'success' | 'error' | 'info';
+}
+
 const AuthPage: React.FC = () => {
   const navigate = useNavigate();
   const [email, setEmail] = React.useState('');
@@ -10,6 +16,16 @@ const AuthPage: React.FC = () => {
   const [isLoading, setIsLoading] = React.useState(false);
   const [error, setError] = React.useState('');
   const [mode, setMode] = React.useState<'login' | 'signup' | 'magic'>('login');
+  const [toasts, setToasts] = React.useState<Toast[]>([]);
+
+  const addToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const toast: Toast = { id, message, type };
+    setToasts((prev) => [...prev, toast]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 4000);
+  };
 
   const handleLogin = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -29,9 +45,12 @@ const AuthPage: React.FC = () => {
             deviceId: deviceInfo.deviceId,
             deviceName: deviceInfo.deviceName,
             platform: deviceInfo.platform,
+            deviceToken: deviceInfo.deviceToken || undefined,
           });
+          addToast('Device registered successfully', 'success');
         } catch (regErr) {
           console.warn('Device registration failed:', regErr);
+          addToast('Device registration failed (but you are logged in)', 'error');
         }
 
         navigate('/dashboard');
@@ -63,9 +82,12 @@ const AuthPage: React.FC = () => {
             deviceId: deviceInfo.deviceId,
             deviceName: deviceInfo.deviceName,
             platform: deviceInfo.platform,
+            deviceToken: deviceInfo.deviceToken || undefined,
           });
+          addToast('Device registered successfully', 'success');
         } catch (regErr) {
           console.warn('Device registration failed:', regErr);
+          addToast('Device registration failed (but you are signed up)', 'error');
         }
 
         navigate('/dashboard');
@@ -95,6 +117,24 @@ const AuthPage: React.FC = () => {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-50 to-white">
+      {/* Toast container */}
+      <div className="fixed top-4 right-4 z-50 space-y-2">
+        {toasts.map((toast) => (
+          <div
+            key={toast.id}
+            className={`px-4 py-3 rounded-lg text-white shadow-lg ${
+              toast.type === 'success'
+                ? 'bg-green-500'
+                : toast.type === 'error'
+                ? 'bg-red-500'
+                : 'bg-blue-500'
+            }`}
+          >
+            {toast.message}
+          </div>
+        ))}
+      </div>
+
       <div className="w-full max-w-md mx-auto p-6">
         <div className="card flex flex-col items-center gap-4">
           <img src={logo} alt="Vidsync" className="w-24 h-24" />

@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/gorilla/websocket"
+	"github.com/vidsync/agent/internal/device"
 	"github.com/vidsync/agent/internal/util"
 )
 
@@ -13,6 +14,7 @@ import (
 type WebSocketServer struct {
 	addr        string
 	logger      *util.Logger
+	deviceMgr   *device.DeviceManager
 	upgrader    websocket.Upgrader
 	clients     map[*Client]bool
 	mu          sync.RWMutex
@@ -27,10 +29,11 @@ type Client struct {
 }
 
 // NewWebSocketServer creates a new WebSocket server
-func NewWebSocketServer(addr string, logger *util.Logger) *WebSocketServer {
+func NewWebSocketServer(addr string, logger *util.Logger, deviceMgr *device.DeviceManager) *WebSocketServer {
 	return &WebSocketServer{
 		addr:        addr,
 		logger:      logger,
+		deviceMgr:   deviceMgr,
 		upgrader:    websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }},
 		clients:     make(map[*Client]bool),
 		broadcastCh: make(chan interface{}, 100),
@@ -42,6 +45,7 @@ func NewWebSocketServer(addr string, logger *util.Logger) *WebSocketServer {
 func (ws *WebSocketServer) Start() error {
 	http.HandleFunc("/v1/events", ws.handleWebSocket)
 	http.HandleFunc("/v1/status", ws.handleStatus)
+	http.HandleFunc("/v1/device", ws.handleDevice)
 
 	ws.logger.Info("WebSocket server listening on ws://127.0.0.1%s", ws.addr)
 
@@ -151,4 +155,29 @@ func (ws *WebSocketServer) handleStatus(w http.ResponseWriter, r *http.Request) 
 	}
 
 	json.NewEncoder(w).Encode(status)
+}
+
+func (ws *WebSocketServer) handleDevice(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if ws.deviceMgr == nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Device manager not available"})
+		return
+	}
+
+	deviceInfo := ws.deviceMgr.GetDeviceInfo()
+	if deviceInfo == nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Device info not initialized"})
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"deviceId":    deviceInfo.ID,
+		"deviceName":  deviceInfo.Name,
+		"platform":    deviceInfo.Platform,
+		"deviceToken": deviceInfo.Token,
+	})
 }
