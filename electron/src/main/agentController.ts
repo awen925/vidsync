@@ -123,21 +123,32 @@ export class AgentController {
 
     for (const c of candidates) {
       try {
-        const proc = spawn(c, ['-version'], { stdio: 'ignore' });
-        proc.on('error', () => {});
-        // If spawn didn't throw immediately, assume binary exists and try start with config
+        // Check if binary exists before spawning (except for PATH-only binary names)
+        if (c !== binaryName && !fs.existsSync(c)) {
+          continue; // try next candidate
+        }
+
         // Note: Nebula will look for config in standard locations; we don't pass a config here.
         const p = spawn(c, [], { detached: false, stdio: ['ignore', 'pipe', 'pipe'] });
+        let errorOccurred = false;
+        p.on('error', (err) => {
+          console.error(`[Nebula] spawn error: ${err.message}`);
+          errorOccurred = true;
+          this.nebulaProcess = null;
+        });
         p.stdout?.on('data', (d) => console.log(`[Nebula] ${d.toString()}`));
         p.stderr?.on('data', (d) => console.error(`[Nebula Error] ${d.toString()}`));
         p.on('exit', (code, sig) => {
           console.log(`[Nebula] exited code=${code} sig=${sig}`);
           this.nebulaProcess = null;
         });
-        this.nebulaProcess = p;
-        console.log('Nebula started via', c);
-        return true;
+        if (!errorOccurred) {
+          this.nebulaProcess = p;
+          console.log('Nebula started via', c);
+          return true;
+        }
       } catch (e) {
+        console.error(`[Nebula] exception with candidate ${c}: ${String(e)}`);
         // try next
       }
     }
@@ -158,19 +169,31 @@ export class AgentController {
 
     for (const c of candidates) {
       try {
-        const proc = spawn(c, ['--version'], { stdio: 'ignore' });
-        proc.on('error', () => {});
+        // Check if binary exists before spawning (except for PATH-only binary names)
+        if (c !== binaryName && !fs.existsSync(c)) {
+          continue; // try next candidate
+        }
+
         const p = spawn(c, [], { detached: false, stdio: ['ignore', 'pipe', 'pipe'] });
+        let errorOccurred = false;
+        p.on('error', (err) => {
+          console.error(`[Syncthing] spawn error: ${err.message}`);
+          errorOccurred = true;
+          this.syncthingProcess = null;
+        });
         p.stdout?.on('data', (d) => console.log(`[Syncthing] ${d.toString()}`));
         p.stderr?.on('data', (d) => console.error(`[Syncthing Error] ${d.toString()}`));
         p.on('exit', (code, sig) => {
           console.log(`[Syncthing] exited code=${code} sig=${sig}`);
           this.syncthingProcess = null;
         });
-        this.syncthingProcess = p;
-        console.log('Syncthing started via', c);
-        return true;
+        if (!errorOccurred) {
+          this.syncthingProcess = p;
+          console.log('Syncthing started via', c);
+          return true;
+        }
       } catch (e) {
+        console.error(`[Syncthing] exception with candidate ${c}: ${String(e)}`);
         // try next
       }
     }
