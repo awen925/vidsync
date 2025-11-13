@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { cloudAPI, withRetry } from '../../hooks/useCloudApi';
 import SetupWizard from '../../components/SetupWizard';
+import ProgressStatus from '../../components/ProgressStatus';
+import SyncStatusPanel from '../../components/SyncStatusPanel';
 
 interface Project {
   id: string;
@@ -422,7 +424,10 @@ const ProjectDetailPage: React.FC = () => {
                 ) : null}
               </div>
               <div style={{ marginTop: 12 }}>
-                <h5 className="font-medium">Connect & Sync with Devices</h5>
+                {/* Sync Status Panel */}
+                <SyncStatusPanel projectId={projectId!} pollInterval={3000} />
+                
+                <h5 className="font-medium mt-4">Connect & Sync with Devices</h5>
                 
                 <div style={{ marginTop: 8, marginBottom: 12, padding: 10, backgroundColor: '#F0F9FF', borderRadius: 4, border: '1px solid #BAE6FD' }}>
                   <div style={{ marginBottom: 8 }}>
@@ -615,6 +620,10 @@ const ProjectDetailPage: React.FC = () => {
                 {tokenStatus ? <div style={{ marginTop: 8 }}>{tokenStatus}</div> : null}
               </div>
 
+            {/* Progress Status Component */}
+            {projectId && <ProgressStatus projectId={projectId} pollInterval={2000} />}
+
+            <h4 className="font-medium mt-6 mb-3">Files</h4>
             <ul>
               {files.map((f) => (
                 <li key={f.name} className="flex items-center py-1">
