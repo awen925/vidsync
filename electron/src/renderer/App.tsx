@@ -24,10 +24,10 @@ function App() {
             try {
               const { error: setErr } = await supabase.auth.setSession({ refresh_token: refreshToken } as any);
               if (setErr) {
-                console.warn('Failed to set session from refresh token:', setErr);
+                // Silently fail in production
               }
             } catch (e) {
-              console.warn('setSession error', e);
+              // Silently fail in production
             }
           }
         }

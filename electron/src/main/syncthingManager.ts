@@ -4,6 +4,7 @@ import fs from 'fs';
 import os from 'os';
 import { app } from 'electron';
 import https from 'https';
+import { isDevelopment } from './logger';
 
 type InstanceInfo = {
   process: ChildProcess;
@@ -179,10 +180,14 @@ export class SyncthingManager {
     if (!this.sharedInstance || !this.sharedInstance.process) {
       try {
         const proc = spawn(binary, ['-home', sharedHome], { stdio: ['ignore', 'pipe', 'pipe'] });
-        proc.stdout?.on('data', (d) => console.log(`[Syncthing:shared] ${d.toString()}`));
-        proc.stderr?.on('data', (d) => console.error(`[Syncthing:shared Error] ${d.toString()}`));
+        proc.stdout?.on('data', (d) => {
+          if (isDevelopment()) console.log(`[Syncthing:shared] ${d.toString()}`);
+        });
+        proc.stderr?.on('data', (d) => {
+          if (isDevelopment()) console.error(`[Syncthing:shared Error] ${d.toString()}`);
+        });
         proc.on('exit', (code, signal) => {
-          console.log(`[Syncthing:shared] exited code=${code} sig=${signal}`);
+          if (isDevelopment()) console.log(`[Syncthing:shared] exited code=${code} sig=${signal}`);
           // clear shared and all project mappings
           this.sharedInstance = null;
           this.instances.clear();
@@ -229,14 +234,14 @@ export class SyncthingManager {
           const ready = await this.waitForSyncthingReady(this.sharedInstance!.apiKey!);
           if (ready) {
             const added = await this.addFolder(this.sharedInstance!.apiKey!, projectId, localPath);
-            console.log(`[Syncthing:shared] Added folder for project ${projectId}: ${added}`);
+            if (isDevelopment()) console.log(`[Syncthing:shared] Added folder for project ${projectId}: ${added}`);
             const inst = this.instances.get(projectId);
             if (inst) inst.folderConfigured = !!added;
           } else {
-            console.warn('[Syncthing:shared] API did not become ready in time');
+            if (isDevelopment()) console.warn('[Syncthing:shared] API did not become ready in time');
           }
         } catch (e) {
-          console.error('[Syncthing:shared] Error configuring folder:', e);
+          if (isDevelopment()) console.error('[Syncthing:shared] Error configuring folder:', e);
         }
       });
     }

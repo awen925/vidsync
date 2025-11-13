@@ -4,6 +4,7 @@ import path from 'path';
 import { platform } from 'os';
 import fs from 'fs';
 import { app } from 'electron';
+import { createServiceLogger, isDevelopment } from './logger';
 
 export class AgentController {
   public events = new EventEmitter();
@@ -12,6 +13,8 @@ export class AgentController {
   private resolvedPath: string | null = null;
   private nebulaProcess: ChildProcess | null = null;
   private syncthingProcess: ChildProcess | null = null;
+  private nebula = createServiceLogger('Nebula');
+  private syncthing = createServiceLogger('Syncthing');
 
   private resolveBinaryPath(): string {
     const binaryName = platform() === 'win32' ? 'vidsync-agent.exe' : 'vidsync-agent';
@@ -78,39 +81,36 @@ export class AgentController {
     return new Promise((resolve) => {
       if (this.isRunning) {
         resolve(true);
-        return;
       }
 
-      try {
-        const binaryPath = this.resolveBinaryPath();
-        this.resolvedPath = binaryPath;
-
-        this.process = spawn(binaryPath, [], {
-          detached: false,
-          stdio: ['ignore', 'pipe', 'pipe'],
-        });
-
-        this.process.stdout?.on('data', (data) => {
-          console.log(`[Agent] ${data.toString()}`);
-          this.events.emit('agent:stdout', data.toString());
-        });
-
-        this.process.stderr?.on('data', (data) => {
-          console.error(`[Agent Error] ${data.toString()}`);
-          this.events.emit('agent:stderr', data.toString());
-        });
-
-        this.process.on('exit', (code, signal) => {
-          console.log(`[Agent] exited code=${code} signal=${signal}`);
-          this.isRunning = false;
-          this.process = null;
-        });
-
-        this.isRunning = true;
-        resolve(true);
-      } catch (error) {
-        console.error('Failed to start agent:', error);
+      this.isRunning = true;
+      const c = this.resolveBinaryPath();
+      if (!c) {
+        this.isRunning = false;
         resolve(false);
+      } else {
+        const p = spawn(c, [], { detached: false, stdio: ['ignore', 'pipe', 'pipe'] });
+        p.on('error', () => {
+          this.isRunning = false;
+          resolve(false);
+        });
+        p.stdout?.on('data', (d) => {
+          const s = d.toString();
+          if (isDevelopment()) console.log(`[Agent] ${d.toString()}`);
+          this.events.emit('agent:stdout', s);
+        });
+        p.stderr?.on('data', (d) => {
+          const s = d.toString();
+          if (isDevelopment()) console.log(`[Agent] ${d.toString()}`);
+          this.events.emit('agent:stderr', s);
+        });
+        p.on('exit', (code, signal) => {
+          if (isDevelopment()) console.log(`[Agent] exited code=${code} signal=${signal}`);
+          this.process = null;
+          this.isRunning = false;
+        });
+        this.process = p;
+        resolve(true);
       }
     });
   }
@@ -126,13 +126,15 @@ export class AgentController {
       binaryName,
     ];
 
-    console.log(`[Nebula] __dirname=${__dirname}, candidates=${JSON.stringify(candidates)}`);
+    if (isDevelopment()) {
+      this.nebula.debug(`__dirname=${__dirname}, candidates=${JSON.stringify(candidates)}`);
+    }
 
     for (const c of candidates) {
       try {
         // Check if binary exists before spawning (except for PATH-only binary names)
         if (c !== binaryName && !fs.existsSync(c)) {
-          console.log(`[Nebula] candidate not found: ${c}`);
+          if (isDevelopment()) this.nebula.debug(`candidate not found: ${c}`);
           continue; // try next candidate
         }
 
@@ -141,40 +143,42 @@ export class AgentController {
           args.push('-config', configPath);
         }
 
-        console.log(`[Nebula] attempting to spawn from: ${c} args=${JSON.stringify(args)}`);
+        if (isDevelopment()) {
+          this.nebula.debug(`attempting to spawn from: ${c} args=${JSON.stringify(args)}`);
+        }
         const p = spawn(c, args, { detached: false, stdio: ['ignore', 'pipe', 'pipe'] });
         let errorOccurred = false;
         p.on('error', (err) => {
-          console.error(`[Nebula] spawn error: ${err.message}`);
+          this.nebula.error(`spawn error: ${err.message}`);
           errorOccurred = true;
           this.nebulaProcess = null;
         });
         p.stdout?.on('data', (d) => {
           const s = d.toString();
-          console.log(`[Nebula] ${s}`);
+          if (isDevelopment()) this.nebula.log(s);
           this.events.emit('nebula:stdout', s);
         });
         p.stderr?.on('data', (d) => {
           const s = d.toString();
-          console.error(`[Nebula Error] ${s}`);
+          this.nebula.error(`${s}`);
           this.events.emit('nebula:stderr', s);
         });
         p.on('exit', (code, sig) => {
-          console.log(`[Nebula] exited code=${code} sig=${sig}`);
+          if (isDevelopment()) this.nebula.debug(`exited code=${code} sig=${sig}`);
           this.nebulaProcess = null;
         });
         if (!errorOccurred) {
           this.nebulaProcess = p;
-          console.log('Nebula started via', c);
+          this.nebula.log('✓ Started');
           return true;
         }
       } catch (e) {
-        console.error(`[Nebula] exception with candidate ${c}: ${String(e)}`);
+        this.nebula.error(`exception with candidate ${c}: ${String(e)}`);
         // try next
       }
     }
 
-    console.warn('Nebula binary not found in candidates');
+    this.nebula.warn('⚠ Binary not found in candidates');
     return false;
   }
 
@@ -189,50 +193,54 @@ export class AgentController {
       binaryName,
     ];
 
-    console.log(`[Syncthing] __dirname=${__dirname}, candidates=${JSON.stringify(candidates)}`);
+    if (isDevelopment()) {
+      this.syncthing.debug(`__dirname=${__dirname}, candidates=${JSON.stringify(candidates)}`);
+    }
 
     for (const c of candidates) {
       try {
         // Check if binary exists before spawning (except for PATH-only binary names)
         if (c !== binaryName && !fs.existsSync(c)) {
-          console.log(`[Syncthing] candidate not found: ${c}`);
+          if (isDevelopment()) this.syncthing.debug(`candidate not found: ${c}`);
           continue; // try next candidate
         }
 
-        console.log(`[Syncthing] attempting to spawn from: ${c}`);
+        if (isDevelopment()) {
+          this.syncthing.debug(`attempting to spawn from: ${c}`);
+        }
         const p = spawn(c, [], { detached: false, stdio: ['ignore', 'pipe', 'pipe'] });
         let errorOccurred = false;
         p.on('error', (err) => {
-          console.error(`[Syncthing] spawn error: ${err.message}`);
+          this.syncthing.error(`spawn error: ${err.message}`);
           errorOccurred = true;
           this.syncthingProcess = null;
         });
         p.stdout?.on('data', (d) => {
           const s = d.toString();
-          console.log(`[Syncthing] ${s}`);
+          if (isDevelopment()) this.syncthing.log(s);
           this.events.emit('syncthing:stdout', s);
         });
         p.stderr?.on('data', (d) => {
           const s = d.toString();
-          console.error(`[Syncthing Error] ${s}`);
+          this.syncthing.error(`${s}`);
           this.events.emit('syncthing:stderr', s);
         });
         p.on('exit', (code, sig) => {
-          console.log(`[Syncthing] exited code=${code} sig=${sig}`);
+          if (isDevelopment()) this.syncthing.debug(`exited code=${code} sig=${sig}`);
           this.syncthingProcess = null;
         });
         if (!errorOccurred) {
           this.syncthingProcess = p;
-          console.log('Syncthing started via', c);
+          this.syncthing.log('✓ Started');
           return true;
         }
       } catch (e) {
-        console.error(`[Syncthing] exception with candidate ${c}: ${String(e)}`);
+        this.syncthing.error(`exception with candidate ${c}: ${String(e)}`);
         // try next
       }
     }
 
-    console.warn('Syncthing binary not found in candidates');
+    this.syncthing.warn('⚠ Binary not found in candidates');
     return false;
   }
 

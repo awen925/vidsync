@@ -3,6 +3,7 @@ import fs from 'fs';
 import { app } from 'electron';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { isDevelopment } from './logger';
 
 const execFileAsync = promisify(execFile);
 
@@ -57,7 +58,7 @@ export class NebulaManager {
 
       const caCertPath = this.resolveCACert();
       if (!caCertPath || !fs.existsSync(caCertPath)) {
-        console.warn(`[Nebula:${projectId}] CA cert not found locally, will download from cloud API`);
+        if (isDevelopment()) console.warn(`[Nebula:${projectId}] CA cert not found locally, will download from cloud API`);
       } else {
         // Copy local CA cert if available
         const caDestPath = path.join(base, 'ca.crt');
@@ -211,7 +212,7 @@ This folder contains the Nebula P2P network configuration for your project.
 
       // Use built-in zip or archiver (for now, return directory path and let UI handle zip)
       // In a real app, use 'archiver' npm package
-      console.log(`[Nebula:${projectId}] Config ready at ${base}`);
+      if (isDevelopment()) console.log(`[Nebula:${projectId}] Config ready at ${base}`);
 
       return {
         success: true,

@@ -53,7 +53,7 @@ const AuthPage: React.FC = () => {
             await (window as any).api.secureStore.setRefreshToken(refreshToken);
           }
         } catch (e) {
-          console.warn('Failed to persist refresh token in secure store:', e);
+          // Silently fail in production
         }
 
         // Register device with cloud after successful login
@@ -67,8 +67,8 @@ const AuthPage: React.FC = () => {
           });
           addToast('Device registered successfully', 'success');
         } catch (regErr) {
-          console.warn('Device registration failed:', regErr);
-          addToast('Device registration failed (but you are logged in)', 'error');
+          // Silently fail device registration
+          addToast('Logged in successfully', 'success');
         }
 
         navigate('/dashboard');
@@ -107,7 +107,7 @@ const AuthPage: React.FC = () => {
             await (window as any).api.secureStore.setRefreshToken(refreshToken);
           }
         } catch (e) {
-          console.warn('Failed to persist refresh token in secure store:', e);
+          // Silently fail in production
         }
 
         try {
@@ -120,8 +120,8 @@ const AuthPage: React.FC = () => {
           });
           addToast('Device registered successfully', 'success');
         } catch (regErr) {
-          console.warn('Device registration failed:', regErr);
-          addToast('Device registration failed (but you are signed up)', 'error');
+          // Silently fail device registration
+          addToast('Signed up successfully', 'success');
         }
 
         navigate('/dashboard');

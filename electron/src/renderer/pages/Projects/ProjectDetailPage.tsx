@@ -241,8 +241,9 @@ const ProjectDetailPage: React.FC = () => {
     try {
       const result = await (window as any).api.syncthingStartForProject(projectId, localPath);
       if (result.success) {
-        console.log('Syncthing started for project:', projectId);
+        // Silently succeed in production
       } else {
+        // Only show error in development
         console.error('Failed to start Syncthing:', result.error);
       }
     } catch (err) {

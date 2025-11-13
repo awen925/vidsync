@@ -11,6 +11,7 @@ const exec = promisify(execCb);
 import { AgentController } from './agentController';
 import { SyncthingManager } from './syncthingManager';
 import { NebulaManager } from './nebulaManager';
+import { logger } from './logger';
 
 let mainWindow: BrowserWindow | null;
 const agentController = new AgentController();
@@ -24,7 +25,7 @@ const forwardLogToRenderer = (channel: string, msg: string) => {
       mainWindow.webContents.send(channel, msg);
     }
   } catch (e) {
-    console.warn('Failed to forward log to renderer', e);
+    logger.warn('Failed to forward log to renderer', e);
   }
 };
 
@@ -88,10 +89,10 @@ app.on('ready', () => {
 
     // Start Syncthing always (it can run without nebula) using syncthingManager for centralized control
     syncthingManager.startForProject('__app_shared__').catch((e) => {
-      console.warn('Failed to start shared Syncthing on app startup:', e);
+      logger.warn('Failed to start shared Syncthing on app startup:', e);
     });
   } catch (e) {
-    console.warn('Error while attempting auto-start services', e);
+    logger.warn('Error while attempting auto-start services', e);
   }
 });
 
@@ -215,7 +216,7 @@ const setupIPC = () => {
       });
 
       if (agentInfo && (agentInfo as any).deviceId) {
-        console.log('Device info from agent:', agentInfo);
+        logger.debug('Device info from agent:', agentInfo);
         return agentInfo;
       }
 
@@ -237,12 +238,12 @@ const setupIPC = () => {
           await fs.promises.mkdir(dataDir, { recursive: true });
           await fs.promises.writeFile(file, JSON.stringify(info, null, 2), 'utf8');
         } catch (werr) {
-          console.warn('Failed to persist device info:', werr);
+          logger.warn('Failed to persist device info:', werr);
         }
         return info;
       }
     } catch (ex) {
-      console.error('device:getInfo error', ex);
+      logger.error('device:getInfo error', ex);
       return { deviceId: `tmp-${Date.now()}`, deviceName: `tmp-${process.platform}`, platform: process.platform };
     }
   });
@@ -257,7 +258,7 @@ const setupIPC = () => {
       try { await fs.promises.chmod(refreshFile, 0o600); } catch (e) {}
       return { ok: true };
     } catch (e: any) {
-      console.error('secureStore:set error', e);
+      logger.error('secureStore:set error', e);
       return { ok: false, error: e?.message || String(e) };
     }
   });
@@ -324,9 +325,9 @@ const setupIPC = () => {
         const directory = await unzipper.Open.buffer(zipBuffer);
         await directory.extract({ path: baseDir, concurrency: 5 });
         extractionSuccess = true;
-        console.log(`[bundle:extract] Successfully extracted to ${baseDir}`);
+        logger.log(`✓ Installation completed at ${baseDir}`);
       } catch (ex) {
-        console.error('[bundle:extract] unzipper extraction failed:', ex);
+        logger.error('[bundle:extract] unzipper extraction failed:', ex);
         return { ok: false, error: `Failed to extract bundle: ${String(ex)}` };
       }
 
@@ -337,7 +338,7 @@ const setupIPC = () => {
         const fpath = path.join(baseDir, f);
         if (!fs.existsSync(fpath)) {
           missingFiles.push(f);
-          console.error(`[bundle:extract] Missing required file: ${f}`);
+          logger.error(`[bundle:extract] Missing required file: ${f}`);
         }
       }
 
@@ -348,9 +349,9 @@ const setupIPC = () => {
       // Ensure private key has secure permissions (0o600)
       try { 
         await fs.promises.chmod(path.join(baseDir, 'node.key'), 0o600);
-        console.log('[bundle:extract] Set node.key permissions to 0o600');
+        logger.log('✓ Security permissions set');
       } catch (e) {
-        console.error('[bundle:extract] Failed to chmod node.key:', e);
+        logger.error('[bundle:extract] Failed to chmod node.key:', e);
       }
 
       // Attempt to auto-start Nebula with the extracted config and wait for TUN/IP assignment
@@ -374,15 +375,15 @@ const setupIPC = () => {
               } else {
                 try { await fs.promises.chmod(dst, 0o644); } catch (e) {}
               }
-              console.log(`[bundle:extract] Copied ${f} to ${legacyDir}`);
+              logger.log(`✓ Installation step completed`);
             }
           } catch (e) {
-            console.error(`[bundle:extract] Failed to copy ${f} to ${dst}:`, e);
+            logger.error(`[bundle:extract] Failed to copy ${f} to ${dst}:`, e);
           }
         }
         result.legacyPath = legacyDir;
       } catch (e) {
-        console.error('[bundle:extract] Failed to copy files to legacy ~/.vidsync dir:', e);
+        logger.error('[bundle:extract] Failed to copy files to legacy ~/.vidsync dir:', e);
       }
       if (fs.existsSync(cfg)) {
         try {
@@ -454,7 +455,7 @@ const setupIPC = () => {
 
           if (!tunAssigned) {
             // Likely privilege issue or nebula failed to create TUN. Provide actionable guidance.
-            console.warn('[nebula:waitForTun] TUN device not assigned - likely a privilege issue');
+            logger.warn('⚠ Network access needs permission');
             const nebulaBin = (agentController as any).resolveBinaryPath ? (agentController as any).resolveBinaryPath() : 'nebula';
             const setcapCmd = `sudo setcap cap_net_admin+ep ${nebulaBin}`;
             result.warning = 'tun_not_assigned';
@@ -463,22 +464,22 @@ const setupIPC = () => {
             // Try an automatic elevation attempt on Linux: run pkexec to apply setcap and retry once
             if (process.platform === 'linux') {
               try {
-                console.log('[nebula:waitForTun] Attempting automatic elevation with pkexec...');
+                logger.log('⟳ Requesting elevated access...');
                 result.autoElevation = 'attempting';
                 const { stdout: pkOut, stderr: pkErr } = await exec(`pkexec setcap cap_net_admin+ep ${nebulaBin}`).catch((e) => { throw e; });
-                console.log('[nebula:waitForTun] Elevation succeeded');
+                logger.log('✓ Network layer initialized');
                 result.autoElevation = { ok: true, stdout: pkOut || '', stderr: pkErr || '' };
 
                 // After successful setcap, restart nebula and poll for TUN again
                 try {
-                  console.log('[nebula:waitForTun] Restarting Nebula after setcap...');
+                  logger.log('⟳ Restarting network layer...');
                   await (agentController as any).stopNebula?.();
                 } catch (e) {}
                 try {
                   const restarted = await agentController.startNebula(cfg);
                   result.nebulaRestartRequested = !!restarted;
                   if (restarted) {
-                    console.log('[nebula:waitForTun] Nebula restarted, polling for TUN again...');
+                    logger.debug('Nebula restarted, polling for TUN again...');
                     // Poll again up to timeoutMs
                     const start2 = Date.now();
                     let tunAssigned2 = false;
@@ -510,7 +511,7 @@ const setupIPC = () => {
                     result.tunAssignedAfterElevation = tunAssigned2;
                     result.tunIpAfterElevation = assignedIp2;
                     if (tunAssigned2) {
-                      console.log(`[nebula:waitForTun] TUN assigned after elevation: ${assignedIp2}`);
+                      logger.log(`✓ Network layer initialized`);
                       // Start Syncthing now
                       try {
                         const synRes2 = await syncthingManager.startForProject(projectId);
