@@ -317,23 +317,46 @@ const setupIPC = () => {
       const zipPath = path.join(baseDir, 'bundle.zip');
       await fs.promises.writeFile(zipPath, zipBuffer, { mode: 0o600 });
 
-      // Use unzipper to extract buffer into directory (simple stub extractor)
+      // Use unzipper to extract buffer into directory
+      let extractionSuccess = false;
       try {
         const unzipper = require('unzipper');
         const directory = await unzipper.Open.buffer(zipBuffer);
         await directory.extract({ path: baseDir, concurrency: 5 });
+        extractionSuccess = true;
+        console.log(`[bundle:extract] Successfully extracted to ${baseDir}`);
       } catch (ex) {
-        console.warn('unzipper extract failed, bundle saved at', zipPath, ex);
-        // If extraction failed, still return the path to the saved zip
-        return { ok: true, dir: baseDir, zip: zipPath, warning: 'extraction_failed' };
+        console.error('[bundle:extract] unzipper extraction failed:', ex);
+        return { ok: false, error: `Failed to extract bundle: ${String(ex)}` };
       }
 
-      // Ensure private key has secure permissions if present
-      try { await fs.promises.chmod(path.join(baseDir, 'node.key'), 0o600); } catch (e) {}
+      // Validate required files were extracted
+      const requiredFiles = ['nebula.yml', 'ca.crt', 'node.crt', 'node.key'];
+      const missingFiles: string[] = [];
+      for (const f of requiredFiles) {
+        const fpath = path.join(baseDir, f);
+        if (!fs.existsSync(fpath)) {
+          missingFiles.push(f);
+          console.error(`[bundle:extract] Missing required file: ${f}`);
+        }
+      }
+
+      if (missingFiles.length > 0) {
+        return { ok: false, error: `Bundle missing required files: ${missingFiles.join(', ')}` };
+      }
+
+      // Ensure private key has secure permissions (0o600)
+      try { 
+        await fs.promises.chmod(path.join(baseDir, 'node.key'), 0o600);
+        console.log('[bundle:extract] Set node.key permissions to 0o600');
+      } catch (e) {
+        console.error('[bundle:extract] Failed to chmod node.key:', e);
+      }
 
       // Attempt to auto-start Nebula with the extracted config and wait for TUN/IP assignment
       const result: any = { ok: true, dir: baseDir };
       const cfg = path.join(baseDir, 'nebula.yml');
+      
       // Also copy extracted files into ~/.vidsync so the packaged vidsync-agent can find them
       try {
         const legacyDir = path.join(os.homedir(), '.vidsync');
@@ -351,14 +374,15 @@ const setupIPC = () => {
               } else {
                 try { await fs.promises.chmod(dst, 0o644); } catch (e) {}
               }
+              console.log(`[bundle:extract] Copied ${f} to ${legacyDir}`);
             }
           } catch (e) {
-            console.warn('Failed to copy', src, 'to', dst, e);
+            console.error(`[bundle:extract] Failed to copy ${f} to ${dst}:`, e);
           }
         }
         result.legacyPath = legacyDir;
       } catch (e) {
-        console.warn('Failed to copy files to legacy ~/.vidsync dir', e);
+        console.error('[bundle:extract] Failed to copy files to legacy ~/.vidsync dir:', e);
       }
       if (fs.existsSync(cfg)) {
         try {
