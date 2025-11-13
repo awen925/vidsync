@@ -454,26 +454,31 @@ const setupIPC = () => {
 
           if (!tunAssigned) {
             // Likely privilege issue or nebula failed to create TUN. Provide actionable guidance.
+            console.warn('[nebula:waitForTun] TUN device not assigned - likely a privilege issue');
             const nebulaBin = (agentController as any).resolveBinaryPath ? (agentController as any).resolveBinaryPath() : 'nebula';
             const setcapCmd = `sudo setcap cap_net_admin+ep ${nebulaBin}`;
             result.warning = 'tun_not_assigned';
             result.setcapCmd = setcapCmd;
-            result.troubleshoot = `Nebula did not create the TUN device within ${timeoutMs / 1000}s. This is often caused by missing privileges. On Linux, run:\n\n  ${setcapCmd}\n\nor run the app with sufficient privileges. If you see other errors, check Nebula logs in the app console.`;
+            result.troubleshoot = `Network setup did not create the TUN device within ${timeoutMs / 1000}s. This often requires system permissions. On Linux, try:\n\n  ${setcapCmd}\n\nOr run the app with elevated privileges. If you still see errors, check the setup logs in the app.`;
             // Try an automatic elevation attempt on Linux: run pkexec to apply setcap and retry once
             if (process.platform === 'linux') {
               try {
+                console.log('[nebula:waitForTun] Attempting automatic elevation with pkexec...');
                 result.autoElevation = 'attempting';
                 const { stdout: pkOut, stderr: pkErr } = await exec(`pkexec setcap cap_net_admin+ep ${nebulaBin}`).catch((e) => { throw e; });
+                console.log('[nebula:waitForTun] Elevation succeeded');
                 result.autoElevation = { ok: true, stdout: pkOut || '', stderr: pkErr || '' };
 
                 // After successful setcap, restart nebula and poll for TUN again
                 try {
+                  console.log('[nebula:waitForTun] Restarting Nebula after setcap...');
                   await (agentController as any).stopNebula?.();
                 } catch (e) {}
                 try {
                   const restarted = await agentController.startNebula(cfg);
                   result.nebulaRestartRequested = !!restarted;
                   if (restarted) {
+                    console.log('[nebula:waitForTun] Nebula restarted, polling for TUN again...');
                     // Poll again up to timeoutMs
                     const start2 = Date.now();
                     let tunAssigned2 = false;
@@ -505,6 +510,7 @@ const setupIPC = () => {
                     result.tunAssignedAfterElevation = tunAssigned2;
                     result.tunIpAfterElevation = assignedIp2;
                     if (tunAssigned2) {
+                      console.log(`[nebula:waitForTun] TUN assigned after elevation: ${assignedIp2}`);
                       // Start Syncthing now
                       try {
                         const synRes2 = await syncthingManager.startForProject(projectId);
@@ -520,6 +526,7 @@ const setupIPC = () => {
                   // ignore restart errors
                 }
               } catch (pkErr: any) {
+                console.error('[nebula:waitForTun] Elevation failed:', pkErr);
                 result.autoElevation = { ok: false, error: pkErr?.message || String(pkErr) };
               }
             }
