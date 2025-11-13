@@ -220,6 +220,139 @@ export class SyncthingManager {
     }
     return out;
   }
+
+  // Read local Syncthing device ID from config.xml for a project
+  async getDeviceIdForProject(projectId: string): Promise<string | null> {
+    const homeDir = path.join(app.getPath('userData'), 'syncthing', projectId);
+    const configPath = path.join(homeDir, 'config.xml');
+    try {
+      const content = await fs.promises.readFile(configPath, 'utf-8');
+      const m = content.match(/<id>([^<]+)<\/id>/);
+      if (m && m[1]) return m[1];
+    } catch (e) {
+      // ignore
+    }
+    return null;
+  }
+
+  // Import a remote device ID into the project's config.xml and add it to the project's folder listing
+  async importRemoteDevice(projectId: string, remoteDeviceId: string, remoteName?: string): Promise<{ success: boolean; error?: string }> {
+    const homeDir = path.join(app.getPath('userData'), 'syncthing', projectId);
+    const configPath = path.join(homeDir, 'config.xml');
+    try {
+      let content = await fs.promises.readFile(configPath, 'utf-8');
+
+      // Ensure devices section exists
+      if (!/\<devices\>/i.test(content)) {
+        // Insert devices section before </configuration>
+        content = content.replace(/<\/configuration>/i, `\n  <devices>\n  </devices>\n</configuration>`);
+      }
+
+      // Add device entry if missing
+      const deviceEntry = `<device id=\"${remoteDeviceId}\">\n    <name>${remoteName || remoteDeviceId}</name>\n    <addresses>\n      <address>dynamic</address>\n    </addresses>\n  </device>`;
+      if (!new RegExp(`<device[^>]*id=\\"${remoteDeviceId}\\"`, 'i').test(content)) {
+        content = content.replace(/<devices>([\s\S]*?)<\/devices>/i, (m, inner) => {
+          return `<devices>${inner}\n  ${deviceEntry}\n</devices>`;
+        });
+      }
+
+      // Add device reference to the folder with id == projectId
+      const folderRegex = new RegExp(`(<folder[^>]*id=\\"${projectId}\\"[\s\S]*?<\/folder>)`, 'i');
+      const folderMatch = content.match(folderRegex);
+      if (folderMatch && folderMatch[1]) {
+        let folderBlock = folderMatch[1];
+        if (!/\<devices\>/i.test(folderBlock)) {
+          // add devices section inside folder
+          folderBlock = folderBlock.replace(/<\/folder>/i, `  <devices>\n    <device id=\"${remoteDeviceId}\" />\n  </devices>\n</folder>`);
+        } else {
+          // ensure device id is present
+          if (!new RegExp(`<device[^>]*id=\\"${remoteDeviceId}\\"`, 'i').test(folderBlock)) {
+            folderBlock = folderBlock.replace(/<devices>([\s\S]*?)<\/devices>/i, (m, inner) => {
+              return `<devices>${inner}\n    <device id=\"${remoteDeviceId}\" />\n  </devices>`;
+            });
+          }
+        }
+        // Replace the original folder block
+        content = content.replace(folderRegex, folderBlock);
+      } else {
+        // No folder block found for this project id — attempt to add devices to all folders with matching id attribute
+        content = content.replace(/<folder([^>]*id=\"[^\"]+\"[\s\S]*?)<\/folder>/gi, (m) => m);
+      }
+
+      // Write back config.xml
+      await fs.promises.writeFile(configPath, content, 'utf-8');
+
+      // Syncthing watches config.xml and should reload automatically. If the instance is running and has API key, we could also POST a reload.
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e?.message || String(e) };
+    }
+  }
+
+  // Query Syncthing API for progress and active transfers for a project
+  async getProgressForProject(projectId: string): Promise<{ success: boolean; completion?: any; activeTransfers?: Array<any>; error?: string }> {
+    const inst = this.instances.get(projectId);
+    if (!inst) return { success: false, error: 'not_running' };
+
+    const apiKey = inst.apiKey;
+    if (!apiKey) return { success: false, error: 'no_api_key' };
+
+    const port = this.SYNCTHING_API_PORT;
+    const results: any = { success: true };
+
+    // Helper to perform HTTPS GET to syncthing API
+    const get = (path: string) => {
+      return new Promise<any>((resolve) => {
+        const req = https.request({ hostname: 'localhost', port, path, method: 'GET', rejectUnauthorized: false, headers: { 'X-API-Key': apiKey } }, (res) => {
+          let data = '';
+          res.on('data', (c) => (data += c));
+          res.on('end', () => {
+            try { resolve(JSON.parse(data)); } catch (e) { resolve(null); }
+          });
+        });
+        req.on('error', () => resolve(null));
+        req.setTimeout(2000, () => { req.destroy(); resolve(null); });
+        req.end();
+      });
+    };
+
+    try {
+      // 1) folder completion for this project
+      try {
+        const comp = await get(`/rest/db/completion?folder=${encodeURIComponent(projectId)}`);
+        results.completion = comp;
+      } catch (e) {
+        results.completion = null;
+      }
+
+      // 2) active transfers
+      try {
+        const transfers = await get('/rest/stats/transfer');
+        // transfers may be an object with files array or similar; we'll try to normalize
+        const active: any[] = [];
+        if (Array.isArray(transfers)) {
+          for (const t of transfers) {
+            if (t && t.files) {
+              for (const f of t.files) {
+                active.push({ file: f.name || f.filename || f.path, bytesDone: f.bytesDone || f.bytesTransferred || 0, bytesTotal: f.size || f.bytesTotal || 0, device: t.device || null });
+              }
+            }
+          }
+        } else if (transfers && transfers.files) {
+          for (const f of transfers.files) {
+            active.push({ file: f.name || f.filename || f.path, bytesDone: f.bytesDone || f.bytesTransferred || 0, bytesTotal: f.size || f.bytesTotal || 0, device: transfers.device || null });
+          }
+        }
+        results.activeTransfers = active;
+      } catch (e) {
+        results.activeTransfers = [];
+      }
+
+      return results;
+    } catch (e: any) {
+      return { success: false, error: e?.message || String(e) };
+    }
+  }
 }
 
 export default SyncthingManager;

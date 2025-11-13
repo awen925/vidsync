@@ -255,6 +255,23 @@ export class AgentController {
     });
   }
 
+  stopNebula(): Promise<boolean> {
+    return new Promise((resolve) => {
+      if (!this.nebulaProcess) {
+        resolve(true);
+        return;
+      }
+
+      try {
+        this.nebulaProcess.kill();
+      } catch (e) {
+        // ignore
+      }
+      this.nebulaProcess = null;
+      resolve(true);
+    });
+  }
+
   getStatus() {
     return {
       running: this.isRunning,

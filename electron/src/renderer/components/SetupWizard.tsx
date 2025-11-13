@@ -13,6 +13,8 @@ const SetupWizard: React.FC<Props> = ({ projectId, onClose }) => {
   const [nebulaLogs, setNebulaLogs] = useState<string[]>([]);
   const [syncthingLogs, setSyncthingLogs] = useState<string[]>([]);
   const [lastResult, setLastResult] = useState<any>(null);
+  const [elevating, setElevating] = useState(false);
+  const [elevateOutput, setElevateOutput] = useState<string | null>(null);
 
   const handlePaste = (e: React.ChangeEvent<HTMLTextAreaElement>) => setBase64(e.target.value);
 
@@ -68,8 +70,71 @@ const SetupWizard: React.FC<Props> = ({ projectId, onClose }) => {
       const binaryPath = parts[parts.length - 1];
       const res = await (window as any).api.applySetcap(binaryPath);
       setStatus('applySetcap result: ' + JSON.stringify(res, null, 2));
+      if (res?.ok) {
+        // After applying setcap, attempt to start nebula and wait for TUN, then start syncthing
+        setStatus('setcap applied — starting Nebula and waiting for TUN assignment...');
+        const nres = await (window as any).api.nebulaStart(projectId);
+        if (nres?.success) {
+          const tun = await (window as any).api.nebulaWaitForTun(30000);
+          if (tun?.ok) {
+            setStatus('TUN acquired: ' + tun.ip + '. Starting Syncthing...');
+            await (window as any).api.syncthingStartForProject(projectId);
+            setStatus('Syncthing start requested. Onboarding complete.');
+          } else {
+            setStatus('Nebula did not acquire TUN within timeout: ' + JSON.stringify(tun));
+          }
+        } else {
+          setStatus('Nebula failed to start after setcap: ' + JSON.stringify(nres));
+        }
+      }
     } catch (e: any) {
       setStatus('applySetcap error: ' + String(e));
+    }
+  };
+
+  const handleElevateSetcap = async () => {
+    try {
+      const cmd: string | undefined = lastResult?.setcapCmd;
+      if (!cmd) {
+        setStatus('No setcap command available in status.');
+        return;
+      }
+      const parts = cmd.split(' ');
+      const binaryPath = parts[parts.length - 1];
+      try {
+        setElevating(true);
+        setElevateOutput(null);
+        setStatus('Requesting elevation...');
+        const res = await (window as any).api.elevateSetcap(binaryPath);
+        setElevating(false);
+        setElevateOutput(JSON.stringify(res, null, 2));
+        if (res?.ok) {
+          setStatus('Elevation succeeded. setcap applied. Starting Nebula...');
+          // Start Nebula and wait for TUN, then start Syncthing
+          const nres = await (window as any).api.nebulaStart(projectId);
+          if (nres?.success) {
+            setStatus('Nebula started. Waiting up to 30s for TUN assignment...');
+            const tun = await (window as any).api.nebulaWaitForTun(30000);
+            if (tun?.ok) {
+              setStatus('TUN acquired: ' + tun.ip + '. Starting Syncthing...');
+              await (window as any).api.syncthingStartForProject(projectId);
+              setStatus('Syncthing start requested. Onboarding complete.');
+            } else {
+              setStatus('Nebula did not acquire TUN within timeout: ' + JSON.stringify(tun));
+            }
+          } else {
+            setStatus('Nebula failed to start after elevation: ' + JSON.stringify(nres));
+          }
+        } else {
+          setStatus('Elevation failed: ' + (res?.message || res?.error || JSON.stringify(res)));
+        }
+      } catch (e: any) {
+        setElevating(false);
+        setStatus('elevateSetcap error: ' + String(e));
+      }
+    } catch (e: any) {
+      setElevating(false);
+      setStatus('elevateSetcap error: ' + String(e));
     }
   };
 
@@ -141,10 +206,28 @@ const SetupWizard: React.FC<Props> = ({ projectId, onClose }) => {
         </div>
           {lastResult?.setcapCmd ? (
             <div style={{ marginTop: 12 }}>
-              <button onClick={handleApplySetcap} className="bg-yellow-600 text-white px-3 py-1 rounded">Apply setcap (may require root)</button>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={handleApplySetcap} className="bg-yellow-600 text-white px-3 py-1 rounded">Apply setcap (if app is root)</button>
+                <button onClick={handleElevateSetcap} className="bg-orange-600 text-white px-3 py-1 rounded">Apply setcap (with elevation)</button>
+              </div>
               <div style={{ marginTop: 8, fontSize: 12, color: '#475569' }}>Suggested command: <code>{lastResult.setcapCmd}</code></div>
             </div>
           ) : null}
+        {elevating ? (
+          <div style={{ position: 'fixed', left: 0, top: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ width: 520, background: '#fff', borderRadius: 8, padding: 16 }}>
+              <h3>Applying capability (setcap)</h3>
+              <p>Please confirm the elevation prompt that may appear. This allows Nebula to create network interfaces.
+              </p>
+              <div style={{ marginTop: 12 }}>
+                <pre style={{ maxHeight: 240, overflow: 'auto', background: '#f3f4f6', padding: 8 }}>{elevateOutput || 'Waiting for elevation...'}</pre>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
+                <button onClick={() => { setElevating(false); setElevateOutput(null); }} className="bg-gray-200 px-3 py-1 rounded">Close</button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );

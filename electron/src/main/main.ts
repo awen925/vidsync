@@ -136,6 +136,33 @@ const setupIPC = () => {
     return syncthingManager.startForProject(projectId, localPath);
   });
 
+  ipcMain.handle('syncthing:getDeviceId', async (_ev, projectId: string) => {
+    try {
+      const id = await syncthingManager.getDeviceIdForProject(projectId);
+      return { ok: true, id };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || String(e) };
+    }
+  });
+
+  ipcMain.handle('syncthing:importRemote', async (_ev, projectId: string, remoteDeviceId: string, remoteName?: string) => {
+    try {
+      const res = await syncthingManager.importRemoteDevice(projectId, remoteDeviceId, remoteName);
+      return res;
+    } catch (e: any) {
+      return { success: false, error: e?.message || String(e) };
+    }
+  });
+
+  ipcMain.handle('syncthing:progressForProject', async (_ev, projectId: string) => {
+    try {
+      const res = await syncthingManager.getProgressForProject(projectId);
+      return res;
+    } catch (e: any) {
+      return { success: false, error: e?.message || String(e) };
+    }
+  });
+
   ipcMain.handle('syncthing:stopForProject', async (_ev, projectId: string) => {
     return syncthingManager.stopForProject(projectId);
   });
@@ -287,6 +314,32 @@ const setupIPC = () => {
       // Attempt to auto-start Nebula with the extracted config and wait for TUN/IP assignment
       const result: any = { ok: true, dir: baseDir };
       const cfg = path.join(baseDir, 'nebula.yml');
+      // Also copy extracted files into ~/.vidsync so the packaged vidsync-agent can find them
+      try {
+        const legacyDir = path.join(os.homedir(), '.vidsync');
+        await fs.promises.mkdir(legacyDir, { recursive: true });
+        const filesToCopy = ['nebula.yml', 'ca.crt', 'node.crt', 'node.key'];
+        for (const f of filesToCopy) {
+          const src = path.join(baseDir, f);
+          const dst = path.join(legacyDir, f);
+          try {
+            if (fs.existsSync(src)) {
+              await fs.promises.copyFile(src, dst);
+              // secure perms for private key
+              if (f === 'node.key') {
+                try { await fs.promises.chmod(dst, 0o600); } catch (e) {}
+              } else {
+                try { await fs.promises.chmod(dst, 0o644); } catch (e) {}
+              }
+            }
+          } catch (e) {
+            console.warn('Failed to copy', src, 'to', dst, e);
+          }
+        }
+        result.legacyPath = legacyDir;
+      } catch (e) {
+        console.warn('Failed to copy files to legacy ~/.vidsync dir', e);
+      }
       if (fs.existsSync(cfg)) {
         try {
           // Start Nebula with explicit config
@@ -362,6 +415,70 @@ const setupIPC = () => {
             result.warning = 'tun_not_assigned';
             result.setcapCmd = setcapCmd;
             result.troubleshoot = `Nebula did not create the TUN device within ${timeoutMs / 1000}s. This is often caused by missing privileges. On Linux, run:\n\n  ${setcapCmd}\n\nor run the app with sufficient privileges. If you see other errors, check Nebula logs in the app console.`;
+            // Try an automatic elevation attempt on Linux: run pkexec to apply setcap and retry once
+            if (process.platform === 'linux') {
+              try {
+                result.autoElevation = 'attempting';
+                const { stdout: pkOut, stderr: pkErr } = await exec(`pkexec setcap cap_net_admin+ep ${nebulaBin}`).catch((e) => { throw e; });
+                result.autoElevation = { ok: true, stdout: pkOut || '', stderr: pkErr || '' };
+
+                // After successful setcap, restart nebula and poll for TUN again
+                try {
+                  await (agentController as any).stopNebula?.();
+                } catch (e) {}
+                try {
+                  const restarted = await agentController.startNebula(cfg);
+                  result.nebulaRestartRequested = !!restarted;
+                  if (restarted) {
+                    // Poll again up to timeoutMs
+                    const start2 = Date.now();
+                    let tunAssigned2 = false;
+                    let assignedIp2: string | null = null;
+                    while (Date.now() - start2 < timeoutMs) {
+                      const candidate2 = getTunIpFromOs();
+                      if (candidate2) {
+                        tunAssigned2 = true;
+                        assignedIp2 = candidate2;
+                        break;
+                      }
+                      if (process.platform === 'linux') {
+                        try {
+                          const { stdout } = await exec(`ip -o -4 addr show ${tunName}`).catch(() => ({ stdout: '' }));
+                          if (stdout && stdout.trim().length > 0) {
+                            const m = stdout.match(/inet\s+([0-9.]+\/[0-9]+)/i) || stdout.match(/inet\s+([0-9.]+)\//i);
+                            if (m && m[1]) {
+                              tunAssigned2 = true;
+                              assignedIp2 = m[1];
+                              break;
+                            }
+                          }
+                        } catch (e) {
+                          // ignore
+                        }
+                      }
+                      await new Promise((r) => setTimeout(r, 1000));
+                    }
+                    result.tunAssignedAfterElevation = tunAssigned2;
+                    result.tunIpAfterElevation = assignedIp2;
+                    if (tunAssigned2) {
+                      // Start Syncthing now
+                      try {
+                        const synRes2 = await syncthingManager.startForProject(projectId);
+                        result.syncthingStarted = synRes2.success;
+                        result.syncthingHome = synRes2.homeDir;
+                      } catch (e) {
+                        result.syncthingStarted = false;
+                        result.syncthingError = String(e);
+                      }
+                    }
+                  }
+                } catch (e) {
+                  // ignore restart errors
+                }
+              } catch (pkErr: any) {
+                result.autoElevation = { ok: false, error: pkErr?.message || String(pkErr) };
+              }
+            }
           } else {
             // Start Syncthing for this project now that Nebula is up
             try {
@@ -453,6 +570,84 @@ const setupIPC = () => {
 
       // Not root — return the exact command for user to run with sudo
       return { ok: false, error: 'not_root', cmd: `sudo setcap cap_net_admin+ep ${binaryPath}` };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || String(e) };
+    }
+  });
+
+  // Try to run pkexec to elevate and apply setcap (Linux only).
+  // Enhanced: parse common failures and return structured result so UI can present friendly messages.
+  ipcMain.handle('privilege:elevateSetcap', async (_ev, binaryPath: string) => {
+    try {
+      if (process.platform !== 'linux') {
+        return { ok: false, error: 'elevate_not_supported', message: 'Elevation helper only supported on Linux via pkexec', cmd: `sudo setcap cap_net_admin+ep ${binaryPath}` };
+      }
+
+      try {
+        // Run pkexec; note: pkexec may display a GUI prompt via polkit
+        const { stdout, stderr } = await exec(`pkexec setcap cap_net_admin+ep ${binaryPath}`);
+        return { ok: true, stdout: stdout || '', stderr: stderr || '' };
+      } catch (e: any) {
+        const errMsg = e?.message || String(e);
+        // Classify common reasons for failure to provide more actionable UI guidance
+        let code = 'pkexec_failed';
+        if (/not found/.test(errMsg) || /No such file/.test(errMsg)) code = 'pkexec_not_found';
+        else if (/Authentication failed|Authentication canceled|Canceled/.test(errMsg)) code = 'auth_canceled';
+        else if (/does not exist|No such file or directory/.test(errMsg)) code = 'binary_not_found';
+
+        return { ok: false, error: code, message: errMsg, cmd: `sudo setcap cap_net_admin+ep ${binaryPath}` };
+      }
+    } catch (e: any) {
+      return { ok: false, error: e?.message || String(e) };
+    }
+  });
+
+  // IPC: wait for TUN assignment (poll networkInterfaces and optional ip command) for up to timeoutMs
+  ipcMain.handle('nebula:waitForTun', async (_ev, timeoutMs: number = 20000) => {
+    try {
+      const tunName = 'tun0';
+      const start = Date.now();
+      const getTunIpFromOs = () => {
+        try {
+          const nets = os.networkInterfaces();
+          for (const name of Object.keys(nets)) {
+            const addrs = nets[name] || [];
+            for (const a of addrs) {
+              if (a.family === 'IPv4' && !a.internal) {
+                const lname = (name || '').toLowerCase();
+                if (lname.includes('tun') || lname.includes('utun') || lname.includes('nebula') || lname.includes('tap')) {
+                  return `${a.address}/${(a as any).netmask || '32'}`;
+                }
+                if (a.address.startsWith('10.')) {
+                  return `${a.address}/32`;
+                }
+              }
+            }
+          }
+        } catch (e) {
+          // ignore
+        }
+        return null;
+      };
+
+      while (Date.now() - start < timeoutMs) {
+        const candidate = getTunIpFromOs();
+        if (candidate) return { ok: true, tunIp: candidate };
+        if (process.platform === 'linux') {
+          try {
+            const { stdout } = await exec(`ip -o -4 addr show ${tunName}`).catch(() => ({ stdout: '' }));
+            if (stdout && stdout.trim().length > 0) {
+              const m = stdout.match(/inet\s+([0-9.]+\/[0-9]+)/i) || stdout.match(/inet\s+([0-9.]+)\//i);
+              if (m && m[1]) return { ok: true, tunIp: m[1] };
+            }
+          } catch (e) {
+            // ignore
+          }
+        }
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+
+      return { ok: false, message: 'timeout' };
     } catch (e: any) {
       return { ok: false, error: e?.message || String(e) };
     }

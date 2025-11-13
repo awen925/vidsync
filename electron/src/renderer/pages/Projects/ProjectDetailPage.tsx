@@ -23,10 +23,16 @@ const ProjectDetailPage: React.FC = () => {
   const [selectedDevice, setSelectedDevice] = useState<string>('');
   const [localPath, setLocalPath] = useState<string | null>(null);
   const [syncthingStatus, setSyncthingStatus] = useState<any>({ running: false, folderConfigured: false });
+  const [deviceId, setDeviceId] = useState<string | null>(null);
+  const [remoteInvite, setRemoteInvite] = useState<string>('');
+  const [pairingStatus, setPairingStatus] = useState<string | null>(null);
+  const [createdToken, setCreatedToken] = useState<string | null>(null);
+  const [tokenStatus, setTokenStatus] = useState<string | null>(null);
   const [nebulaStatus, setNebulaStatus] = useState<any>(null);
   const [showWizard, setShowWizard] = useState<boolean>(false);
   const [files, setFiles] = useState<Array<{ name: string; isDirectory: boolean }>>([]);
   const [fileStatuses, setFileStatuses] = useState<Record<string, 'red' | 'yellow' | 'green'>>({});
+  const [fileProgress, setFileProgress] = useState<Record<string, number>>({});
 
   const fetchProject = async () => {
     try {
@@ -78,8 +84,81 @@ const ProjectDetailPage: React.FC = () => {
       
       // Start Syncthing for this project with the local path
       startSyncthingForProject((project as any).local_path);
+      // fetch device id for UI pairing
+      setTimeout(async () => {
+        try {
+          const r = await (window as any).api.syncthingGetDeviceId(projectId);
+          if (r?.ok && r.id) setDeviceId(r.id);
+        } catch (e) {}
+      }, 2000);
     }
   }, [project]);
+
+  // Poll Syncthing for active transfers and completion to surface per-file progress
+  useEffect(() => {
+    let mounted = true;
+    const pollProgress = async () => {
+      if (!projectId) return;
+      try {
+        const s = await (window as any).api.syncthingProgressForProject(projectId);
+        if (!mounted) return;
+        if (s && s.success) {
+          const active = s.activeTransfers || [];
+          const progressMap: Record<string, number> = {};
+          for (const a of active) {
+            const name = a.file || a.path || a.filename || '';
+            const done = Number(a.bytesDone || 0);
+            const total = Number(a.bytesTotal || 0) || 0;
+            const percent = total > 0 ? Math.round((done / total) * 100) : 0;
+            if (name) progressMap[name] = percent;
+          }
+          setFileProgress(progressMap);
+
+          // Update fileStatuses heuristically based on progress
+          setFileStatuses((prev) => {
+            const next = { ...prev };
+            for (const f of files) {
+              const p = progressMap[f.name];
+              if (p >= 100) next[f.name] = 'green';
+              else if (p > 0) next[f.name] = 'yellow';
+              else if (!next[f.name]) next[f.name] = 'red';
+            }
+            return next;
+          });
+        }
+      } catch (e) {
+        // ignore
+      }
+      if (mounted) setTimeout(pollProgress, 2000);
+    };
+    pollProgress();
+    return () => { mounted = false; };
+  }, [projectId, files]);
+
+  // If we created a token, poll for acceptor_device_id
+  useEffect(() => {
+    if (!createdToken) return;
+    let mounted = true;
+    const poll = async () => {
+      try {
+        const resp = await cloudAPI.get(`/pairings/${createdToken}`);
+        const data = resp.data;
+        if (data.acceptor_device_id) {
+          setTokenStatus(`Accepted by ${data.acceptor_device_id}`);
+          // import remote device into our local syncthing config
+          try {
+            await (window as any).api.syncthingImportRemote(projectId, data.acceptor_device_id, 'peer');
+          } catch (e) {}
+          return;
+        }
+      } catch (e) {
+        // ignore
+      }
+      if (mounted) setTimeout(poll, 2000);
+    };
+    poll();
+    return () => { mounted = false; };
+  }, [createdToken]);
 
   const chooseFolder = async () => {
     const chosen = await (window as any).api.openDirectory();
@@ -287,13 +366,103 @@ const ProjectDetailPage: React.FC = () => {
                   )
                 ) : null}
               </div>
+              <div style={{ marginTop: 12 }}>
+                <h5 className="font-medium">Quick Pair / Invite</h5>
+                <div style={{ marginTop: 8 }}>
+                  <div style={{ marginBottom: 8 }}>
+                    <strong>Your Device ID:</strong>
+                    <div style={{ marginTop: 6 }}>
+                      <code style={{ backgroundColor: '#f3f4f6', padding: '6px 8px', borderRadius: 4 }}>{deviceId || 'Starting Syncthing...'}</code>
+                      <button className="ml-3 bg-gray-200 px-2 py-1 rounded" onClick={async () => {
+                        try { await navigator.clipboard.writeText(deviceId || ''); } catch (e) {}
+                      }}>Copy</button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <strong>Accept invite (paste remote Device ID)</strong>
+                    <div style={{ marginTop: 6, display: 'flex', gap: 8 }}>
+                      <input value={remoteInvite} onChange={(e) => setRemoteInvite(e.target.value)} placeholder="Remote Device ID or Token" className="border p-2 flex-1" />
+                      <button className="bg-blue-600 text-white px-3 py-1 rounded" onClick={async () => {
+                        if (!remoteInvite) return;
+                        setPairingStatus('Importing...');
+                        try {
+                          // If input looks like a token (short hex), try cloud lookup first
+                          const isToken = /^[0-9a-f]{12}$/i.test(remoteInvite);
+                          if (isToken) {
+                            // Fetch invite from cloud
+                            const r = await cloudAPI.get(`/pairings/${remoteInvite}`);
+                            const d = r.data;
+                            if (!d || !d.from_device_id) { setPairingStatus('Invalid invite token'); return; }
+                            // Import inviter device id
+                            await (window as any).api.syncthingStartForProject(projectId, localPath);
+                            const res = await (window as any).api.syncthingImportRemote(projectId, d.from_device_id, 'remote');
+                            if (res?.success) {
+                              // Accept the invite by posting our device id
+                              const ourIdResp = await (window as any).api.syncthingGetDeviceId(projectId);
+                              const ourId = ourIdResp?.id;
+                              if (ourId) {
+                                await cloudAPI.post(`/pairings/${remoteInvite}/accept`, { acceptorDeviceId: ourId });
+                              }
+                              setPairingStatus('Imported via token. Syncthing will connect shortly.');
+                            } else {
+                              setPairingStatus('Failed to import device: ' + (res?.error || JSON.stringify(res)));
+                            }
+                          } else {
+                            // Treat as device ID
+                            await (window as any).api.syncthingStartForProject(projectId, localPath);
+                            const res = await (window as any).api.syncthingImportRemote(projectId, remoteInvite, 'remote');
+                            if (res?.success) setPairingStatus('Imported device ID.'); else setPairingStatus('Failed: ' + (res?.error || JSON.stringify(res)));
+                          }
+                        } catch (e: any) {
+                          setPairingStatus('Error: ' + String(e));
+                        }
+                      }}>Accept Invite</button>
+                    </div>
+                    {pairingStatus ? <div style={{ marginTop: 8 }}>{pairingStatus}</div> : null}
+                  </div>
+                </div>
+              </div>
             </div>
+              <div style={{ marginTop: 12 }}>
+                <h5 className="font-medium">Create cloud invite</h5>
+                <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
+                  <button className="bg-green-600 text-white px-3 py-1 rounded" onClick={async () => {
+                    try {
+                      setCreatedToken(null);
+                      setTokenStatus('Creating...');
+                      const ourIdResp = await (window as any).api.syncthingGetDeviceId(projectId);
+                      const ourId = ourIdResp?.id;
+                      if (!ourId) { setTokenStatus('Failed to read local device ID'); return; }
+                      const r = await cloudAPI.post('/pairings', { projectId, fromDeviceId: ourId, expiresIn: 300 });
+                      const t = r.data.token;
+                      setCreatedToken(t);
+                      setTokenStatus('Token created: ' + t + ' — waiting for acceptor...');
+                    } catch (e: any) {
+                      setTokenStatus('Error creating token: ' + String(e));
+                    }
+                  }}>Create Invite Token</button>
+                  {createdToken ? <div style={{ display: 'flex', alignItems: 'center' }}><code style={{ backgroundColor: '#f3f4f6', padding: '6px 8px', borderRadius: 4 }}>{createdToken}</code>
+                  <button className="ml-3 bg-gray-200 px-2 py-1 rounded" onClick={() => { try { navigator.clipboard.writeText(createdToken || ''); } catch (e) {} }}>Copy</button></div> : null}
+                </div>
+                {tokenStatus ? <div style={{ marginTop: 8 }}>{tokenStatus}</div> : null}
+              </div>
 
             <ul>
               {files.map((f) => (
                 <li key={f.name} className="flex items-center py-1">
                   <div className="w-4 h-4 mr-3 rounded-full" style={{ backgroundColor: fileStatuses[f.name] === 'green' ? '#10B981' : fileStatuses[f.name] === 'yellow' ? '#F59E0B' : '#EF4444' }} />
-                  <div className="flex-1">{f.name}{f.isDirectory ? '/' : ''}</div>
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between">
+                      <span>{f.name}{f.isDirectory ? '/' : ''}</span>
+                      {fileProgress[f.name] !== undefined && fileProgress[f.name] > 0 ? <span style={{ fontSize: '0.85em', color: '#6B7280', marginLeft: 8 }}>{fileProgress[f.name]}%</span> : null}
+                    </div>
+                    {fileProgress[f.name] !== undefined && fileProgress[f.name] > 0 && fileProgress[f.name] < 100 ? (
+                      <div style={{ width: '100%', height: 4, backgroundColor: '#E5E7EB', borderRadius: 2, marginTop: 4, overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${fileProgress[f.name]}%`, backgroundColor: fileProgress[f.name] < 50 ? '#F59E0B' : '#10B981', transition: 'width 0.3s ease' }} />
+                      </div>
+                    ) : null}
+                  </div>
                 </li>
               ))}
             </ul>

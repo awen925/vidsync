@@ -7,6 +7,7 @@ import deviceRoutes from './api/devices/routes';
 import syncRoutes from './api/sync/routes';
 import userRoutes from './api/users/routes';
 import nebulaRoutes from './api/nebula/routes';
+import pairingsRoutes from './api/pairings/routes';
 import { errorHandler } from './middleware/errorHandler';
 
 dotenv.config();
@@ -31,6 +32,7 @@ app.use('/api/devices', deviceRoutes);
 app.use('/api/sync', syncRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/nebula', nebulaRoutes);
+app.use('/api/pairings', pairingsRoutes);
 
 // Health check
 app.get('/health', (req: Request, res: Response) => {
