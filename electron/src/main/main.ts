@@ -5,12 +5,36 @@ import os from 'os';
 import crypto from 'crypto';
 import https from 'https';
 import http from 'http';
+import { exec as execCb } from 'child_process';
+import { promisify } from 'util';
+const exec = promisify(execCb);
 import { AgentController } from './agentController';
 import { SyncthingManager } from './syncthingManager';
+import { NebulaManager } from './nebulaManager';
 
 let mainWindow: BrowserWindow | null;
 const agentController = new AgentController();
 const syncthingManager = new SyncthingManager();
+const nebulaManager = new NebulaManager();
+
+// Forward agent logs to renderer when available
+const forwardLogToRenderer = (channel: string, msg: string) => {
+  try {
+    if (mainWindow && mainWindow.webContents) {
+      mainWindow.webContents.send(channel, msg);
+    }
+  } catch (e) {
+    console.warn('Failed to forward log to renderer', e);
+  }
+};
+
+// Hook up agentController event emitter
+agentController.events.on('nebula:stdout', (msg: string) => forwardLogToRenderer('logs:nebula', msg));
+agentController.events.on('nebula:stderr', (msg: string) => forwardLogToRenderer('logs:nebula', msg));
+agentController.events.on('syncthing:stdout', (msg: string) => forwardLogToRenderer('logs:syncthing', msg));
+agentController.events.on('syncthing:stderr', (msg: string) => forwardLogToRenderer('logs:syncthing', msg));
+agentController.events.on('agent:stdout', (msg: string) => forwardLogToRenderer('logs:agent', msg));
+agentController.events.on('agent:stderr', (msg: string) => forwardLogToRenderer('logs:agent', msg));
 
 const isDev = process.env.NODE_ENV === 'development';
 const isMac = process.platform === 'darwin';
@@ -45,9 +69,28 @@ app.on('ready', () => {
   createWindow();
   setupIPC();
   agentController.start();
-  // Attempt to start Nebula and Syncthing services as part of app startup
-  agentController.startNebula();
-  agentController.startSyncthing();
+  // Attempt to start Nebula and Syncthing services as part of app startup only if config exists
+  try {
+    const nebulaDir = path.join(app.getPath('userData'), 'nebula');
+    let startedNebula = false;
+    if (fs.existsSync(nebulaDir)) {
+      const entries = fs.readdirSync(nebulaDir, { withFileTypes: true });
+      for (const e of entries) {
+        if (e.isDirectory()) {
+          const cfg = path.join(nebulaDir, e.name, 'nebula.yml');
+          if (fs.existsSync(cfg)) {
+            agentController.startNebula(cfg).then((ok) => { if (ok) startedNebula = true; });
+            break;
+          }
+        }
+      }
+    }
+
+    // Start Syncthing always (it can run without nebula)
+    agentController.startSyncthing();
+  } catch (e) {
+    console.warn('Error while attempting auto-start services', e);
+  }
 });
 
 app.on('window-all-closed', () => {
@@ -185,6 +228,234 @@ const setupIPC = () => {
   ipcMain.handle('secureStore:clear', async () => {
     try { await fs.promises.unlink(refreshFile); } catch (e) {}
     return { ok: true };
+  });
+
+  // Nebula config generation
+  ipcMain.handle('nebula:generateConfig', async (_ev, projectId: string, opts?: any) => {
+    try {
+      return await nebulaManager.generateConfig(projectId, opts || {});
+    } catch (e: any) {
+      return { success: false, error: e?.message || String(e) };
+    }
+  });
+
+  ipcMain.handle('nebula:openFolder', async (_ev, projectId: string) => {
+    try {
+      const { shell } = require('electron');
+      const folderPath = path.join(app.getPath('userData'), 'nebula', projectId);
+      await fs.promises.mkdir(folderPath, { recursive: true });
+      shell.openPath(folderPath);
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || String(e) };
+    }
+  });
+
+  ipcMain.handle('nebula:getPath', async (_ev, projectId: string) => {
+    try {
+      const folderPath = path.join(app.getPath('userData'), 'nebula', projectId);
+      return { ok: true, path: folderPath };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || String(e) };
+    }
+  });
+
+  // Bundle extraction: accept base64-encoded ZIP and extract into userData/nebula/<projectId>
+  ipcMain.handle('bundle:extract', async (_ev, projectId: string, base64Zip: string) => {
+    try {
+      const baseDir = path.join(app.getPath('userData'), 'nebula', projectId);
+      await fs.promises.mkdir(baseDir, { recursive: true });
+
+      const zipBuffer = Buffer.from(base64Zip, 'base64');
+      const zipPath = path.join(baseDir, 'bundle.zip');
+      await fs.promises.writeFile(zipPath, zipBuffer, { mode: 0o600 });
+
+      // Use unzipper to extract buffer into directory (simple stub extractor)
+      try {
+        const unzipper = require('unzipper');
+        const directory = await unzipper.Open.buffer(zipBuffer);
+        await directory.extract({ path: baseDir, concurrency: 5 });
+      } catch (ex) {
+        console.warn('unzipper extract failed, bundle saved at', zipPath, ex);
+        // If extraction failed, still return the path to the saved zip
+        return { ok: true, dir: baseDir, zip: zipPath, warning: 'extraction_failed' };
+      }
+
+      // Ensure private key has secure permissions if present
+      try { await fs.promises.chmod(path.join(baseDir, 'node.key'), 0o600); } catch (e) {}
+
+      // Attempt to auto-start Nebula with the extracted config and wait for TUN/IP assignment
+      const result: any = { ok: true, dir: baseDir };
+      const cfg = path.join(baseDir, 'nebula.yml');
+      if (fs.existsSync(cfg)) {
+        try {
+          // Start Nebula with explicit config
+          const started = await agentController.startNebula(cfg);
+          result.nebulaRequested = !!started;
+
+          // Wait for tun0 IP assignment (Linux). Poll up to 20s
+          const tunName = 'tun0';
+          const timeoutMs = 20000;
+          const start = Date.now();
+          let tunAssigned = false;
+          let assignedIp: string | null = null;
+
+          const getTunIpFromOs = () => {
+            try {
+              const nets = os.networkInterfaces();
+              for (const name of Object.keys(nets)) {
+                const addrs = nets[name] || [];
+                for (const a of addrs) {
+                  if (a.family === 'IPv4' && !a.internal) {
+                    const lname = (name || '').toLowerCase();
+                    if (lname.includes('tun') || lname.includes('utun') || lname.includes('nebula') || lname.includes('tap')) {
+                      return `${a.address}/${a.netmask ? (a.netmask as any) : '32'}`;
+                    }
+                    // also try to detect Nebula-like address ranges (10.99.* or 10.* private)
+                    if (a.address.startsWith('10.')) {
+                      return `${a.address}/32`;
+                    }
+                  }
+                }
+              }
+            } catch (e) {
+              // ignore
+            }
+            return null;
+          };
+
+          while (Date.now() - start < timeoutMs) {
+            try {
+              // First try Node OS networkInterfaces (cross-platform)
+              const candidate = getTunIpFromOs();
+              if (candidate) {
+                tunAssigned = true;
+                assignedIp = candidate;
+                break;
+              }
+
+              // Fallback: on Linux use `ip` tool to check tun interface
+              if (process.platform === 'linux') {
+                const { stdout } = await exec(`ip -o -4 addr show ${tunName}`).catch(() => ({ stdout: '' }));
+                if (stdout && stdout.trim().length > 0) {
+                  const m = stdout.match(/inet\s+([0-9.]+\/[0-9]+)/i) || stdout.match(/inet\s+([0-9.]+)\//i);
+                  if (m && m[1]) {
+                    tunAssigned = true;
+                    assignedIp = m[1];
+                    break;
+                  }
+                }
+              }
+            } catch (e) {
+              // ignore and retry
+            }
+            await new Promise((r) => setTimeout(r, 1000));
+          }
+
+          result.tunAssigned = tunAssigned;
+          result.tunIp = assignedIp;
+
+          if (!tunAssigned) {
+            // Likely privilege issue or nebula failed to create TUN. Provide actionable guidance.
+            const nebulaBin = (agentController as any).resolveBinaryPath ? (agentController as any).resolveBinaryPath() : 'nebula';
+            const setcapCmd = `sudo setcap cap_net_admin+ep ${nebulaBin}`;
+            result.warning = 'tun_not_assigned';
+            result.setcapCmd = setcapCmd;
+            result.troubleshoot = `Nebula did not create the TUN device within ${timeoutMs / 1000}s. This is often caused by missing privileges. On Linux, run:\n\n  ${setcapCmd}\n\nor run the app with sufficient privileges. If you see other errors, check Nebula logs in the app console.`;
+          } else {
+            // Start Syncthing for this project now that Nebula is up
+            try {
+              const synRes = await syncthingManager.startForProject(projectId);
+              result.syncthingStarted = synRes.success;
+              result.syncthingHome = synRes.homeDir;
+            } catch (e) {
+              result.syncthingStarted = false;
+              result.syncthingError = String(e);
+            }
+          }
+        } catch (e: any) {
+          result.nebulaError = e?.message || String(e);
+        }
+      }
+
+      return result;
+    } catch (e: any) {
+      console.error('bundle:extract error', e);
+      return { ok: false, error: e?.message || String(e) };
+    }
+  });
+
+  // Start Nebula (stub: uses existing AgentController.startNebula)
+  ipcMain.handle('nebula:start', async (_ev, projectId?: string) => {
+    try {
+      // If a projectId is provided, prefer starting Nebula with that project's nebula.yml config
+      let configPath: string | undefined;
+      if (projectId) {
+        const folderPath = path.join(app.getPath('userData'), 'nebula', projectId);
+        const candidate = path.join(folderPath, 'nebula.yml');
+        try {
+          await fs.promises.access(candidate);
+          configPath = candidate;
+        } catch (e) {
+          // file not accessible; fall back to undefined
+          configPath = undefined;
+        }
+      }
+
+      const started = await agentController.startNebula(configPath);
+      return { success: started, config: configPath };
+    } catch (e: any) {
+      return { success: false, error: e?.message || String(e) };
+    }
+  });
+
+  ipcMain.handle('process:getStatus', async () => {
+    try {
+      const status = agentController.getStatus();
+      const synList = syncthingManager.listAll();
+      return { ok: true, agent: status, syncthing: synList };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || String(e) };
+    }
+  });
+
+  ipcMain.handle('process:stopAll', async () => {
+    try {
+      await agentController.stop();
+      // Attempt to stop all syncthing instances
+      const syns = syncthingManager.listAll();
+      for (const k of Object.keys(syns)) {
+        try { await syncthingManager.stopForProject(k); } catch (e) {}
+      }
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || String(e) };
+    }
+  });
+
+  // Privilege helper: attempt to apply setcap if running as root, otherwise return command
+  ipcMain.handle('privilege:applySetcap', async (_ev, binaryPath: string) => {
+    try {
+      // On non-linux, just return the suggested command
+      if (process.platform !== 'linux') {
+        return { ok: false, error: 'setcap only supported on Linux via this API', cmd: `sudo setcap cap_net_admin+ep ${binaryPath}` };
+      }
+
+      // If running as root, try to run setcap directly
+      if (typeof process.getuid === 'function' && process.getuid() === 0) {
+        try {
+          const { stdout, stderr } = await exec(`setcap cap_net_admin+ep ${binaryPath}`);
+          return { ok: true, stdout, stderr };
+        } catch (e: any) {
+          return { ok: false, error: e?.message || String(e) };
+        }
+      }
+
+      // Not root — return the exact command for user to run with sudo
+      return { ok: false, error: 'not_root', cmd: `sudo setcap cap_net_admin+ep ${binaryPath}` };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || String(e) };
+    }
   });
 
 };

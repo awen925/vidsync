@@ -54,7 +54,7 @@ CREATE INDEX idx_devices_is_online ON devices(is_online);
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS projects (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  owner_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  owner_id UUID NOT NULL,
   name TEXT NOT NULL,
   description TEXT,
   local_path TEXT,
@@ -77,9 +77,9 @@ CREATE INDEX idx_projects_status ON projects(status);
 CREATE TABLE IF NOT EXISTS project_members (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL,
   role TEXT NOT NULL DEFAULT 'viewer', -- 'owner', 'editor', 'viewer'
-  invited_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  invited_by UUID,
   invited_at TIMESTAMP WITH TIME ZONE,
   joined_at TIMESTAMP WITH TIME ZONE,
   status TEXT DEFAULT 'pending', -- 'pending', 'accepted', 'declined'

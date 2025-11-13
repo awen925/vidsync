@@ -1,10 +1,12 @@
 import { spawn, ChildProcess } from 'child_process';
+import { EventEmitter } from 'events';
 import path from 'path';
 import { platform } from 'os';
 import fs from 'fs';
 import { app } from 'electron';
 
 export class AgentController {
+  public events = new EventEmitter();
   private process: ChildProcess | null = null;
   private isRunning = false;
   private resolvedPath: string | null = null;
@@ -90,10 +92,12 @@ export class AgentController {
 
         this.process.stdout?.on('data', (data) => {
           console.log(`[Agent] ${data.toString()}`);
+          this.events.emit('agent:stdout', data.toString());
         });
 
         this.process.stderr?.on('data', (data) => {
           console.error(`[Agent Error] ${data.toString()}`);
+          this.events.emit('agent:stderr', data.toString());
         });
 
         this.process.on('exit', (code, signal) => {
@@ -111,7 +115,7 @@ export class AgentController {
     });
   }
 
-  async startNebula(): Promise<boolean> {
+  async startNebula(configPath?: string): Promise<boolean> {
     if (this.nebulaProcess) return true;
 
     const binaryName = process.platform === 'win32' ? 'nebula.exe' : 'nebula';
@@ -132,17 +136,29 @@ export class AgentController {
           continue; // try next candidate
         }
 
-        console.log(`[Nebula] attempting to spawn from: ${c}`);
-        // Note: Nebula will look for config in standard locations; we don't pass a config here.
-        const p = spawn(c, [], { detached: false, stdio: ['ignore', 'pipe', 'pipe'] });
+        const args: string[] = [];
+        if (configPath) {
+          args.push('-config', configPath);
+        }
+
+        console.log(`[Nebula] attempting to spawn from: ${c} args=${JSON.stringify(args)}`);
+        const p = spawn(c, args, { detached: false, stdio: ['ignore', 'pipe', 'pipe'] });
         let errorOccurred = false;
         p.on('error', (err) => {
           console.error(`[Nebula] spawn error: ${err.message}`);
           errorOccurred = true;
           this.nebulaProcess = null;
         });
-        p.stdout?.on('data', (d) => console.log(`[Nebula] ${d.toString()}`));
-        p.stderr?.on('data', (d) => console.error(`[Nebula Error] ${d.toString()}`));
+        p.stdout?.on('data', (d) => {
+          const s = d.toString();
+          console.log(`[Nebula] ${s}`);
+          this.events.emit('nebula:stdout', s);
+        });
+        p.stderr?.on('data', (d) => {
+          const s = d.toString();
+          console.error(`[Nebula Error] ${s}`);
+          this.events.emit('nebula:stderr', s);
+        });
         p.on('exit', (code, sig) => {
           console.log(`[Nebula] exited code=${code} sig=${sig}`);
           this.nebulaProcess = null;
@@ -191,8 +207,16 @@ export class AgentController {
           errorOccurred = true;
           this.syncthingProcess = null;
         });
-        p.stdout?.on('data', (d) => console.log(`[Syncthing] ${d.toString()}`));
-        p.stderr?.on('data', (d) => console.error(`[Syncthing Error] ${d.toString()}`));
+        p.stdout?.on('data', (d) => {
+          const s = d.toString();
+          console.log(`[Syncthing] ${s}`);
+          this.events.emit('syncthing:stdout', s);
+        });
+        p.stderr?.on('data', (d) => {
+          const s = d.toString();
+          console.error(`[Syncthing Error] ${s}`);
+          this.events.emit('syncthing:stderr', s);
+        });
         p.on('exit', (code, sig) => {
           console.log(`[Syncthing] exited code=${code} sig=${sig}`);
           this.syncthingProcess = null;

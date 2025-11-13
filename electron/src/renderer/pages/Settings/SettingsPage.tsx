@@ -1,12 +1,16 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 // styles are imported globally from App.tsx
 import { cloudAPI } from '../../hooks/useCloudApi';
+import { supabase } from '../../lib/supabaseClient';
 
 export const SettingsPage: React.FC = () => {
+  const navigate = useNavigate();
   const [downloadPath, setDownloadPath] = React.useState('~/Downloads');
   const [autoSync, setAutoSync] = React.useState(true);
   const [syncMode, setSyncMode] = React.useState<'automatic' | 'manual'>('automatic');
   const [saving, setSaving] = React.useState(false);
+  const [loggingOut, setLoggingOut] = React.useState(false);
 
   React.useEffect(() => {
     const fetchSettings = async () => {
@@ -44,6 +48,24 @@ export const SettingsPage: React.FC = () => {
       alert('Failed to save settings');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    setLoggingOut(true);
+    try {
+      // Clear Supabase session
+      await supabase.auth.signOut();
+      
+      // Clear secure refresh token
+      await (window as any).api.secureStore.clearRefreshToken();
+      
+      // Redirect to auth page
+      navigate('/auth');
+    } catch (error) {
+      console.error('Failed to logout:', error);
+      alert('Logout failed');
+      setLoggingOut(false);
     }
   };
 
@@ -92,6 +114,18 @@ export const SettingsPage: React.FC = () => {
       >
         {saving ? 'Saving...' : 'Save Settings'}
       </button>
+
+      <div style={{ marginTop: '2rem', paddingTop: '2rem', borderTop: '1px solid #ddd' }}>
+        <h2>Account</h2>
+        <button
+          onClick={handleLogout}
+          disabled={loggingOut}
+          className="btn-danger"
+          style={{ background: '#dc3545', color: 'white', padding: '0.5rem 1rem', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+        >
+          {loggingOut ? 'Logging out...' : 'Logout'}
+        </button>
+      </div>
     </div>
   );
 };

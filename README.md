@@ -2,6 +2,8 @@
 
 A modern, secure, and fast file synchronization application built with **Electron**, **Go**, and **Node.js + Supabase**.
 
+> **Latest**: Phase 3 complete — Nebula IP allocator & device registration implemented. See [PHASE3_SUMMARY.md](./PHASE3_SUMMARY.md) and [PHASE3_NEBULA_ALLOCATOR_COMPLETE.md](./PHASE3_NEBULA_ALLOCATOR_COMPLETE.md).
+
 ## 📁 Project Structure
 
 ```

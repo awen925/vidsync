@@ -13,6 +13,7 @@ const ProjectsPage: React.FC = () => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [localPath, setLocalPath] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
@@ -32,15 +33,31 @@ const ProjectsPage: React.FC = () => {
     fetchProjects();
   }, []);
 
+  const handleChooseFolder = async () => {
+    try {
+      const path = await (window as any).api.openDirectory();
+      if (path) {
+        setLocalPath(path);
+      }
+    } catch (err) {
+      console.error('Failed to choose folder', err);
+    }
+  };
+
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name) return;
 
     try {
-      const resp = await cloudAPI.post('/projects', { name, description });
+      const resp = await cloudAPI.post('/projects', { 
+        name, 
+        description,
+        local_path: localPath || null,
+      });
       const project = resp.data.project;
       setName('');
       setDescription('');
+      setLocalPath('');
       navigate(`/projects/${project.id}`);
     } catch (err) {
       console.error('Failed to create project', err);
@@ -58,6 +75,7 @@ const ProjectsPage: React.FC = () => {
             placeholder="Project name"
             value={name}
             onChange={(e) => setName(e.target.value)}
+            required
           />
         </div>
         <div className="mb-2">
@@ -67,6 +85,23 @@ const ProjectsPage: React.FC = () => {
             value={description}
             onChange={(e) => setDescription(e.target.value)}
           />
+        </div>
+        <div className="mb-2">
+          <div className="flex gap-2">
+            <input
+              className="border p-2 flex-1"
+              placeholder="Local folder path (optional)"
+              value={localPath}
+              readOnly
+            />
+            <button
+              type="button"
+              onClick={handleChooseFolder}
+              className="bg-gray-600 text-white px-4 py-2 rounded"
+            >
+              Choose Folder
+            </button>
+          </div>
         </div>
         <button type="submit" className="bg-blue-600 text-white px-4 py-2 rounded">
           Create Project
