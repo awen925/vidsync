@@ -1,6 +1,7 @@
 import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import { app } from 'electron';
 import https from 'https';
 
@@ -14,6 +15,7 @@ type InstanceInfo = {
 
 export class SyncthingManager {
   private instances: Map<string, InstanceInfo> = new Map();
+  private sharedInstance: InstanceInfo | null = null;
   private readonly SYNCTHING_API_TIMEOUT = 30000;
   private readonly SYNCTHING_API_PORT = 8384;
 
@@ -40,6 +42,35 @@ export class SyncthingManager {
     }
 
     return binaryName;
+  }
+
+  // Try to detect a system-wide running Syncthing and return its config info (apikey, homeDir)
+  private findSystemSyncthingConfig(): { apiKey?: string; homeDir?: string; deviceId?: string } | null {
+    try {
+      const candidates = [
+        path.join(os.homedir(), '.config', 'syncthing', 'config.xml'),
+        path.join(os.homedir(), '.config', 'Syncthing', 'config.xml'),
+        path.join(process.cwd(), 'syncthing', 'config.xml'),
+      ];
+      for (const c of candidates) {
+        try {
+          if (fs.existsSync(c)) {
+            const content = fs.readFileSync(c, 'utf-8');
+            const apim = content.match(/<apikey>([^<]+)<\/apikey>/i);
+            const idm = content.match(/<id>([^<]+)<\/id>/i);
+            const apiKey = apim ? apim[1] : undefined;
+            const deviceId = idm ? idm[1] : undefined;
+            const homeDir = path.dirname(c);
+            return { apiKey, homeDir, deviceId };
+          }
+        } catch (e) {
+          // ignore and try next
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+    return null;
   }
 
   private async getApiKey(homeDir: string): Promise<string | null> {
@@ -129,69 +160,89 @@ export class SyncthingManager {
   }
 
   async startForProject(projectId: string, localPath?: string): Promise<{ success: boolean; pid?: number; homeDir?: string; error?: string }> {
+    // If project's already configured, return
     if (this.instances.has(projectId)) {
       const info = this.instances.get(projectId)!;
-      return { success: true, pid: info.process.pid || undefined, homeDir: info.homeDir };
+      return { success: true, pid: info.process?.pid || undefined, homeDir: info.homeDir };
     }
 
     const binary = this.resolveBinary();
-    const homeDir = path.join(app.getPath('userData'), 'syncthing', projectId);
+    const sharedHome = path.join(app.getPath('userData'), 'syncthing', 'shared');
 
     try {
-      await fs.promises.mkdir(homeDir, { recursive: true });
+      await fs.promises.mkdir(sharedHome, { recursive: true });
     } catch (e) {
-      return { success: false, error: `Failed to create home dir: ${String(e)}` };
+      return { success: false, error: `Failed to create shared home dir: ${String(e)}` };
     }
 
-    try {
-      // Spawn syncthing with a dedicated home directory so each project has isolated config
-      const proc = spawn(binary, ['-home', homeDir], { stdio: ['ignore', 'pipe', 'pipe'] });
-
-      proc.stdout?.on('data', (d) => console.log(`[Syncthing:${projectId}] ${d.toString()}`));
-      proc.stderr?.on('data', (d) => console.error(`[Syncthing:${projectId} Error] ${d.toString()}`));
-
-      proc.on('exit', (code, signal) => {
-        console.log(`[Syncthing:${projectId}] exited code=${code} sig=${signal}`);
-        this.instances.delete(projectId);
-      });
-
-      // Wait a bit for config.xml to be created
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-
-      // Get API key from config
-      const apiKey = await this.getApiKey(homeDir);
-      if (!apiKey) {
-        console.warn(`[Syncthing:${projectId}] Failed to get API key`);
-      }
-
-      // Store instance info
-      const instanceInfo: InstanceInfo = { process: proc, homeDir, localPath, apiKey: apiKey || undefined };
-      this.instances.set(projectId, instanceInfo);
-
-      // If we have a local path and API key, wait for Syncthing to be ready and configure the folder
-      if (localPath && apiKey && fs.existsSync(localPath)) {
-        setImmediate(async () => {
-          try {
-            const ready = await this.waitForSyncthingReady(apiKey);
-            if (ready) {
-              const folderAdded = await this.addFolder(apiKey, projectId, localPath);
-              console.log(`[Syncthing:${projectId}] Folder ${folderAdded ? 'added' : 'failed to add'}`);
-              // Update instance info with configuration status
-              const inst = this.instances.get(projectId);
-              if (inst) inst.folderConfigured = !!folderAdded;
-            } else {
-              console.warn(`[Syncthing:${projectId}] Syncthing API did not become ready in time`);
-            }
-          } catch (e) {
-            console.error(`[Syncthing:${projectId}] Error configuring folder:`, e);
-          }
+    // Ensure shared instance exists (spawn if necessary)
+    if (!this.sharedInstance || !this.sharedInstance.process) {
+      try {
+        const proc = spawn(binary, ['-home', sharedHome], { stdio: ['ignore', 'pipe', 'pipe'] });
+        proc.stdout?.on('data', (d) => console.log(`[Syncthing:shared] ${d.toString()}`));
+        proc.stderr?.on('data', (d) => console.error(`[Syncthing:shared Error] ${d.toString()}`));
+        proc.on('exit', (code, signal) => {
+          console.log(`[Syncthing:shared] exited code=${code} sig=${signal}`);
+          // clear shared and all project mappings
+          this.sharedInstance = null;
+          this.instances.clear();
         });
-      }
 
-      return { success: true, pid: proc.pid || undefined, homeDir };
-    } catch (e: any) {
-      return { success: false, error: e?.message || String(e) };
+        // wait a short while for config.xml to be created
+        await new Promise((r) => setTimeout(r, 1500));
+        const apiKey = await this.getApiKey(sharedHome);
+        const inst: InstanceInfo = { process: proc, homeDir: sharedHome, apiKey: apiKey || undefined };
+        this.sharedInstance = inst;
+      } catch (e: any) {
+        // spawn error: try system syncthing fallback
+        const sys = this.findSystemSyncthingConfig();
+        if (sys && sys.apiKey) {
+          const ready = await this.waitForSyncthingReady(sys.apiKey);
+          if (ready) {
+            const instanceInfo: InstanceInfo = { process: (null as unknown) as ChildProcess, homeDir: sys.homeDir || '', apiKey: sys.apiKey };
+            this.sharedInstance = instanceInfo;
+          } else {
+            return { success: false, error: 'failed_start_shared_and_system_unready' };
+          }
+        } else {
+          return { success: false, error: e?.message || String(e) };
+        }
+      }
     }
+
+    // At this point we have a sharedInstance with apiKey (or at least homeDir)
+    const apiKey = this.sharedInstance?.apiKey;
+    if (!apiKey) {
+      // try once more to read apiKey from shared home
+      const maybeKey = await this.getApiKey(this.sharedInstance?.homeDir || sharedHome);
+      if (maybeKey) this.sharedInstance!.apiKey = maybeKey;
+    }
+
+    // Add project mapping that references the shared instance
+    const projectInstance: InstanceInfo = { process: this.sharedInstance!.process, homeDir: this.sharedInstance!.homeDir, localPath, apiKey: this.sharedInstance!.apiKey, folderConfigured: false };
+    this.instances.set(projectId, projectInstance);
+
+    // Configure folder if requested
+    if (localPath && this.sharedInstance?.apiKey && fs.existsSync(localPath)) {
+      setImmediate(async () => {
+        try {
+          const ready = await this.waitForSyncthingReady(this.sharedInstance!.apiKey!);
+          if (ready) {
+            const added = await this.addFolder(this.sharedInstance!.apiKey!, projectId, localPath);
+            console.log(`[Syncthing:shared] Added folder for project ${projectId}: ${added}`);
+            const inst = this.instances.get(projectId);
+            if (inst) inst.folderConfigured = !!added;
+          } else {
+            console.warn('[Syncthing:shared] API did not become ready in time');
+          }
+        } catch (e) {
+          console.error('[Syncthing:shared] Error configuring folder:', e);
+        }
+      });
+    }
+
+
+    return { success: true, pid: this.sharedInstance?.process?.pid || undefined, homeDir: this.sharedInstance?.homeDir };
   }
 
   async stopForProject(projectId: string): Promise<{ success: boolean; error?: string }> {
@@ -210,20 +261,21 @@ export class SyncthingManager {
   getStatusForProject(projectId: string) {
     const info = this.instances.get(projectId);
     if (!info) return { running: false };
-    return { running: true, pid: info.process.pid, homeDir: info.homeDir, localPath: info.localPath };
+    return { running: true, pid: info.process?.pid || undefined, homeDir: info.homeDir, localPath: info.localPath, apiKey: info.apiKey };
   }
 
   listAll() {
     const out: Record<string, any> = {};
     for (const [k, v] of this.instances.entries()) {
-      out[k] = { pid: v.process.pid, homeDir: v.homeDir, localPath: v.localPath };
+      out[k] = { pid: v.process?.pid || undefined, homeDir: v.homeDir, localPath: v.localPath, apiKey: v.apiKey };
     }
     return out;
   }
 
   // Read local Syncthing device ID from config.xml for a project
   async getDeviceIdForProject(projectId: string): Promise<string | null> {
-    const homeDir = path.join(app.getPath('userData'), 'syncthing', projectId);
+    const inst = this.instances.get(projectId);
+    const homeDir = inst?.homeDir || path.join(app.getPath('userData'), 'syncthing', projectId);
     const configPath = path.join(homeDir, 'config.xml');
     try {
       const content = await fs.promises.readFile(configPath, 'utf-8');
@@ -237,7 +289,8 @@ export class SyncthingManager {
 
   // Import a remote device ID into the project's config.xml and add it to the project's folder listing
   async importRemoteDevice(projectId: string, remoteDeviceId: string, remoteName?: string): Promise<{ success: boolean; error?: string }> {
-    const homeDir = path.join(app.getPath('userData'), 'syncthing', projectId);
+    const inst = this.instances.get(projectId);
+    const homeDir = inst?.homeDir || path.join(app.getPath('userData'), 'syncthing', projectId);
     const configPath = path.join(homeDir, 'config.xml');
     try {
       let content = await fs.promises.readFile(configPath, 'utf-8');

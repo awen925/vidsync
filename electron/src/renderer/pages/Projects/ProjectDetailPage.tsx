@@ -84,13 +84,29 @@ const ProjectDetailPage: React.FC = () => {
       
       // Start Syncthing for this project with the local path
       startSyncthingForProject((project as any).local_path);
-      // fetch device id for UI pairing
-      setTimeout(async () => {
+      // Ensure Syncthing is running and fetch device id for UI pairing.
+      (async () => {
         try {
-          const r = await (window as any).api.syncthingGetDeviceId(projectId);
-          if (r?.ok && r.id) setDeviceId(r.id);
-        } catch (e) {}
-      }, 2000);
+          // Start Syncthing for this project (no-op if already running)
+          await (window as any).api.syncthingStartForProject(projectId, (project as any).local_path);
+
+          // Poll for device id for up to 15s
+          const start = Date.now();
+          let found = null;
+          while (Date.now() - start < 15000) {
+            try {
+              const r = await (window as any).api.syncthingGetDeviceId(projectId);
+              if (r?.ok && r.id) { found = r.id; break; }
+            } catch (e) {
+              // ignore and retry
+            }
+            await new Promise((res) => setTimeout(res, 1000));
+          }
+          if (found) setDeviceId(found);
+        } catch (e) {
+          // ignore — deviceId will remain null and UI will show helpful messages
+        }
+      })();
     }
   }, [project]);
 
@@ -337,6 +353,14 @@ const ProjectDetailPage: React.FC = () => {
                 ) : (
                   <span style={{ color: '#6B7280' }}>Syncthing stopped</span>
                 )}
+                {syncthingStatus?.running && !syncthingStatus?.pid && syncthingStatus?.apiKey ? (
+                  <span style={{ marginLeft: 12, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ backgroundColor: '#FEF3C7', color: '#92400E', padding: '4px 8px', borderRadius: 6, fontSize: '0.85em' }}>Using system Syncthing</span>
+                    <button className="ml-3 bg-gray-200 px-2 py-1 rounded" onClick={async () => {
+                      try { await (window as any).api.syncthingOpenGui(projectId); } catch (e) { console.error('Failed to open Syncthing GUI', e); }
+                    }}>Open Syncthing</button>
+                  </span>
+                ) : null}
               </span>
               <div style={{ display: 'inline-block', marginLeft: 12 }}>
                 <button className="bg-indigo-600 text-white px-3 py-1 rounded" onClick={handleGenerateNebula}>
@@ -430,10 +454,20 @@ const ProjectDetailPage: React.FC = () => {
                   <button className="bg-green-600 text-white px-3 py-1 rounded" onClick={async () => {
                     try {
                       setCreatedToken(null);
-                      setTokenStatus('Creating...');
-                      const ourIdResp = await (window as any).api.syncthingGetDeviceId(projectId);
-                      const ourId = ourIdResp?.id;
+                      setTokenStatus('Ensuring Syncthing is running...');
+                      // Ensure syncthing is running and device id is available
+                      await (window as any).api.syncthingStartForProject(projectId, localPath);
+                      const start = Date.now();
+                      let ourId: string | null = null;
+                      while (Date.now() - start < 15000) {
+                        try {
+                          const ourIdResp = await (window as any).api.syncthingGetDeviceId(projectId);
+                          if (ourIdResp?.ok && ourIdResp.id) { ourId = ourIdResp.id; break; }
+                        } catch (e) {}
+                        await new Promise((r) => setTimeout(r, 1000));
+                      }
                       if (!ourId) { setTokenStatus('Failed to read local device ID'); return; }
+                      setTokenStatus('Creating token...');
                       const r = await cloudAPI.post('/pairings', { projectId, fromDeviceId: ourId, expiresIn: 300 });
                       const t = r.data.token;
                       setCreatedToken(t);

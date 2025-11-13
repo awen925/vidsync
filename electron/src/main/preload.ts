@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('api', {
   syncthingStartForProject: (projectId: string, localPath?: string) => ipcRenderer.invoke('syncthing:startForProject', { projectId, localPath }),
   syncthingStopForProject: (projectId: string) => ipcRenderer.invoke('syncthing:stopForProject', projectId),
   syncthingStatusForProject: (projectId: string) => ipcRenderer.invoke('syncthing:statusForProject', projectId),
+  syncthingOpenGui: (projectId: string) => ipcRenderer.invoke('syncthing:openGui', projectId),
   syncthingGetDeviceId: (projectId: string) => ipcRenderer.invoke('syncthing:getDeviceId', projectId),
   syncthingImportRemote: (projectId: string, remoteDeviceId: string, remoteName?: string) => ipcRenderer.invoke('syncthing:importRemote', projectId, remoteDeviceId, remoteName),
   syncthingProgressForProject: (projectId: string) => ipcRenderer.invoke('syncthing:progressForProject', projectId),

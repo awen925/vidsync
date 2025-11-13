@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, ipcMain } from 'electron';
+import { app, BrowserWindow, Menu, ipcMain, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -86,8 +86,10 @@ app.on('ready', () => {
       }
     }
 
-    // Start Syncthing always (it can run without nebula)
-    agentController.startSyncthing();
+    // Start Syncthing always (it can run without nebula) using syncthingManager for centralized control
+    syncthingManager.startForProject('__app_shared__').catch((e) => {
+      console.warn('Failed to start shared Syncthing on app startup:', e);
+    });
   } catch (e) {
     console.warn('Error while attempting auto-start services', e);
   }
@@ -169,6 +171,24 @@ const setupIPC = () => {
 
   ipcMain.handle('syncthing:statusForProject', async (_ev, projectId: string) => {
     return syncthingManager.getStatusForProject(projectId);
+  });
+
+  ipcMain.handle('syncthing:openGui', async (_ev, projectId: string) => {
+    try {
+      const status = syncthingManager.getStatusForProject(projectId as string);
+      // If we have an API key or known homeDir, attempt to open the GUI URL, otherwise open the home dir
+      if (status && status.apiKey) {
+        const url = `http://127.0.0.1:8384/`;
+        try { await shell.openExternal(url); return { ok: true, opened: 'url', url }; } catch (e) { /* fallthrough */ }
+      }
+      if (status && status.homeDir) {
+        const folderPath = status.homeDir;
+        try { await shell.openPath(folderPath); return { ok: true, opened: 'path', path: folderPath }; } catch (e) { return { ok: false, error: String(e) }; }
+      }
+      return { ok: false, error: 'no_syncthing_info' };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || String(e) };
+    }
   });
 
   // Device info: create or return a local device identity stored in userData
