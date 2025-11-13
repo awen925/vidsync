@@ -391,6 +391,48 @@ const ProjectDetailPage: React.FC = () => {
               </div>
               <div style={{ marginTop: 12 }}>
                 <h5 className="font-medium">Connect & Sync with Devices</h5>
+                
+                <div style={{ marginTop: 8, marginBottom: 12, padding: 10, backgroundColor: '#F0F9FF', borderRadius: 4, border: '1px solid #BAE6FD' }}>
+                  <div style={{ marginBottom: 8 }}>
+                    <button 
+                      className="bg-purple-600 text-white px-3 py-1 rounded"
+                      onClick={async () => {
+                        setPairingStatus('Generating invite code...');
+                        try {
+                          const resp = await cloudAPI.post('/pairings', {
+                            projectId,
+                            fromDeviceId: deviceId,
+                            expiresIn: 3600
+                          });
+                          if (resp.data?.token) {
+                            setCreatedToken(resp.data.token);
+                            setPairingStatus(`✓ Invite created! Share code: ${resp.data.token}`);
+                          }
+                        } catch (e) {
+                          setPairingStatus('Failed to generate invite: ' + String(e));
+                        }
+                      }}
+                    >
+                      Generate Invite Code
+                    </button>
+                  </div>
+                  
+                  {createdToken && (
+                    <div style={{ backgroundColor: '#ECFDF5', padding: 8, borderRadius: 4, marginBottom: 8 }}>
+                      <strong style={{ color: '#065F46' }}>Share this code with another device:</strong>
+                      <code style={{ display: 'block', marginTop: 4, padding: 8, backgroundColor: '#F0FDF4', fontWeight: 'bold', fontSize: '1.1em', letterSpacing: '0.1em', fontFamily: 'monospace' }}>
+                        {createdToken}
+                      </code>
+                      <button 
+                        onClick={() => navigator.clipboard.writeText(createdToken)}
+                        className="bg-green-600 text-white px-2 py-1 rounded mt-2 text-sm"
+                      >
+                        Copy Invite Code
+                      </button>
+                    </div>
+                  )}
+                </div>
+                
                 <div style={{ marginTop: 8 }}>
                   <div style={{ marginBottom: 8 }}>
                     <strong>Your Device Code:</strong>
