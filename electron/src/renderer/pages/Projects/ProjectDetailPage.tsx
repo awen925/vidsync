@@ -347,29 +347,28 @@ const ProjectDetailPage: React.FC = () => {
               {localPath ? <span className="text-sm text-gray-600">{localPath}</span> : <span className="text-sm text-gray-500">No folder selected</span>}
               <span style={{ marginLeft: 12 }}>
                 {syncthingStatus?.folderConfigured ? (
-                  <span style={{ color: '#10B981' }}>Syncthing folder configured</span>
+                  <span style={{ color: '#10B981' }}>✓ Folder synced</span>
                 ) : syncthingStatus?.running ? (
-                  <span style={{ color: '#F59E0B' }}>Syncthing running — folder not configured</span>
+                  <span style={{ color: '#F59E0B' }}>↻ Syncing...</span>
                 ) : (
-                  <span style={{ color: '#6B7280' }}>Syncthing stopped</span>
+                  <span style={{ color: '#6B7280' }}>○ Not syncing</span>
                 )}
                 {syncthingStatus?.running && !syncthingStatus?.pid && syncthingStatus?.apiKey ? (
                   <span style={{ marginLeft: 12, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ backgroundColor: '#FEF3C7', color: '#92400E', padding: '4px 8px', borderRadius: 6, fontSize: '0.85em' }}>Using system Syncthing</span>
                     <button className="ml-3 bg-gray-200 px-2 py-1 rounded" onClick={async () => {
-                      try { await (window as any).api.syncthingOpenGui(projectId); } catch (e) { console.error('Failed to open Syncthing GUI', e); }
-                    }}>Open Syncthing</button>
+                      try { await (window as any).api.syncthingOpenGui(projectId); } catch (e) { console.error('Failed to open sync details', e); }
+                    }}>View sync details</button>
                   </span>
                 ) : null}
               </span>
               <div style={{ display: 'inline-block', marginLeft: 12 }}>
                 <button className="bg-indigo-600 text-white px-3 py-1 rounded" onClick={handleGenerateNebula}>
-                  Generate Nebula Config
+                  Set up network connection
                 </button>
                 {nebulaStatus ? (
                   nebulaStatus.success ? (
                     <div style={{ marginLeft: 8, marginTop: 8 }}>
-                      <span style={{ color: '#10B981' }}>✓ Config generated at:</span>
+                      <span style={{ color: '#10B981' }}>✓ Network configured at:</span>
                       <br />
                       <code style={{ fontSize: '0.85em', backgroundColor: '#f3f4f6', padding: '4px 8px', borderRadius: '4px', display: 'inline-block', marginTop: 4 }}>
                         {nebulaStatus.dir}
@@ -380,23 +379,23 @@ const ProjectDetailPage: React.FC = () => {
                         onClick={handleOpenNebulaFolder}
                         style={{ marginTop: 8 }}
                       >
-                        Open Nebula Folder
+                        View files
                       </button>
                     </div>
                   ) : (
                     <div style={{ marginLeft: 8, color: '#EF4444', marginTop: 8 }}>
-                      ✗ Failed: {String(nebulaStatus.error)}
+                      ✗ Error: {String(nebulaStatus.error)}
                     </div>
                   )
                 ) : null}
               </div>
               <div style={{ marginTop: 12 }}>
-                <h5 className="font-medium">Quick Pair / Invite</h5>
+                <h5 className="font-medium">Connect & Sync with Devices</h5>
                 <div style={{ marginTop: 8 }}>
                   <div style={{ marginBottom: 8 }}>
-                    <strong>Your Device ID:</strong>
+                    <strong>Your Device Code:</strong>
                     <div style={{ marginTop: 6 }}>
-                      <code style={{ backgroundColor: '#f3f4f6', padding: '6px 8px', borderRadius: 4 }}>{deviceId || 'Starting Syncthing...'}</code>
+                      <code style={{ backgroundColor: '#f3f4f6', padding: '6px 8px', borderRadius: 4 }}>{deviceId || 'Starting...'}</code>
                       <button className="ml-3 bg-gray-200 px-2 py-1 rounded" onClick={async () => {
                         try { await navigator.clipboard.writeText(deviceId || ''); } catch (e) {}
                       }}>Copy</button>
@@ -404,9 +403,9 @@ const ProjectDetailPage: React.FC = () => {
                   </div>
 
                   <div>
-                    <strong>Accept invite (paste remote Device ID)</strong>
+                    <strong>Connect with another device (paste their code)</strong>
                     <div style={{ marginTop: 6, display: 'flex', gap: 8 }}>
-                      <input value={remoteInvite} onChange={(e) => setRemoteInvite(e.target.value)} placeholder="Remote Device ID or Token" className="border p-2 flex-1" />
+                      <input value={remoteInvite} onChange={(e) => setRemoteInvite(e.target.value)} placeholder="Paste device code or invite token here" className="border p-2 flex-1" />
                       <button className="bg-blue-600 text-white px-3 py-1 rounded" onClick={async () => {
                         if (!remoteInvite) return;
                         setPairingStatus('Importing...');
@@ -428,20 +427,20 @@ const ProjectDetailPage: React.FC = () => {
                               if (ourId) {
                                 await cloudAPI.post(`/pairings/${remoteInvite}/accept`, { acceptorDeviceId: ourId });
                               }
-                              setPairingStatus('Imported via token. Syncthing will connect shortly.');
+                              setPairingStatus('Device connected. Files will sync shortly.');
                             } else {
-                              setPairingStatus('Failed to import device: ' + (res?.error || JSON.stringify(res)));
+                              setPairingStatus('Failed to connect device: ' + (res?.error || JSON.stringify(res)));
                             }
                           } else {
                             // Treat as device ID
                             await (window as any).api.syncthingStartForProject(projectId, localPath);
                             const res = await (window as any).api.syncthingImportRemote(projectId, remoteInvite, 'remote');
-                            if (res?.success) setPairingStatus('Imported device ID.'); else setPairingStatus('Failed: ' + (res?.error || JSON.stringify(res)));
+                            if (res?.success) setPairingStatus('Device connected.'); else setPairingStatus('Failed: ' + (res?.error || JSON.stringify(res)));
                           }
                         } catch (e: any) {
                           setPairingStatus('Error: ' + String(e));
                         }
-                      }}>Accept Invite</button>
+                      }}>Connect Device</button>
                     </div>
                     {pairingStatus ? <div style={{ marginTop: 8 }}>{pairingStatus}</div> : null}
                   </div>

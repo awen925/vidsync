@@ -174,8 +174,8 @@ const SetupWizard: React.FC<Props> = ({ projectId, onClose }) => {
 
   return (
     <div style={{ padding: 12, border: '1px solid #e5e7eb', borderRadius: 6, background: '#ffffff' }}>
-      <h3>Nebula Setup Wizard</h3>
-      <p style={{ color: '#6b7280' }}>Paste the base64 ZIP bundle you received from the cloud, or upload the ZIP file.</p>
+      <h3>Network Setup</h3>
+      <p style={{ color: '#6b7280' }}>Paste the base64 connection bundle you received, or upload the file.</p>
       <div style={{ marginTop: 8 }}>
         <input type="file" accept=".zip" onChange={handleFile} />
       </div>
@@ -184,8 +184,8 @@ const SetupWizard: React.FC<Props> = ({ projectId, onClose }) => {
       </div>
       <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
         <button onClick={handleExtract} disabled={working} className="bg-indigo-600 text-white px-3 py-1 rounded">Extract Bundle</button>
-        <button onClick={handleStartNebula} disabled={working} className="bg-green-600 text-white px-3 py-1 rounded">Start Nebula</button>
-        <button onClick={handleStatus} className="bg-gray-700 text-white px-3 py-1 rounded">Get Status</button>
+        <button onClick={handleStartNebula} disabled={working} className="bg-green-600 text-white px-3 py-1 rounded">Start Network</button>
+        <button onClick={handleStatus} className="bg-gray-700 text-white px-3 py-1 rounded">Check Status</button>
         <button onClick={onClose} className="bg-transparent text-gray-700 px-3 py-1 rounded">Close</button>
       </div>
 
@@ -193,13 +193,13 @@ const SetupWizard: React.FC<Props> = ({ projectId, onClose }) => {
         <pre style={{ whiteSpace: 'pre-wrap', background: '#f8fafc', padding: 8, borderRadius: 6 }}>{status}</pre>
         {dir ? <div style={{ marginTop: 8 }}>Extracted to: <code>{dir}</code></div> : null}
         <div style={{ marginTop: 12 }}>
-            <h4>Nebula logs</h4>
+            <h4>Setup logs (keep visible for debugging)</h4>
           <div style={{ maxHeight: 160, overflow: 'auto', background: '#0f172a', color: '#e2e8f0', padding: 8, borderRadius: 6 }}>
             {nebulaLogs.map((l, i) => <div key={i} style={{ fontFamily: 'monospace', fontSize: 12 }}>{l}</div>)}
           </div>
         </div>
         <div style={{ marginTop: 12 }}>
-          <h4>Syncthing logs</h4>
+          <h4>Transfer logs</h4>
           <div style={{ maxHeight: 160, overflow: 'auto', background: '#0f172a', color: '#e2e8f0', padding: 8, borderRadius: 6 }}>
             {syncthingLogs.map((l, i) => <div key={i} style={{ fontFamily: 'monospace', fontSize: 12 }}>{l}</div>)}
           </div>
@@ -216,8 +216,8 @@ const SetupWizard: React.FC<Props> = ({ projectId, onClose }) => {
         {elevating ? (
           <div style={{ position: 'fixed', left: 0, top: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <div style={{ width: 520, background: '#fff', borderRadius: 8, padding: 16 }}>
-              <h3>Applying capability (setcap)</h3>
-              <p>Please confirm the elevation prompt that may appear. This allows Nebula to create network interfaces.
+              <h3>Applying capability settings</h3>
+              <p>Please confirm the elevation prompt that may appear. This allows network setup to create necessary interfaces.
               </p>
               <div style={{ marginTop: 12 }}>
                 <pre style={{ maxHeight: 240, overflow: 'auto', background: '#f3f4f6', padding: 8 }}>{elevateOutput || 'Waiting for elevation...'}</pre>
