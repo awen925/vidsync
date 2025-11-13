@@ -96,6 +96,14 @@ Implementation checklist covering:
 ./test-device-pairing.sh 3001 3002 120  # Custom ports and duration
 ```
 
+**Features**:
+- ✅ Automatic JSON parsing (uses `jq` if available, falls back to `grep`)
+- ✅ Robust error handling for missing Device ID
+- ✅ Detailed device info extraction from Syncthing API
+- ✅ Real-time sync progress monitoring
+- ✅ Automatic cleanup on exit or error
+- ✅ Colored output for easy log reading
+
 ## API Endpoints Used
 
 ### Cloud API
@@ -170,22 +178,44 @@ GET    http://localhost:8384/rest/db/status?folder=ID
 
 ## Testing Instructions
 
-### Quick Test (Single Device)
+### Quick Test (Single Device with Automated Script)
 ```bash
 # Terminal 1: Start app
-cd /path/to/vidsync/electron
+cd /home/fograin/work1/vidsync/electron
 npm run dev
 
-# Once Syncthing is running (wait 10 seconds):
+# Wait 15-20 seconds for Syncthing to initialize
+# Then in Terminal 2: Run test
+
 # Terminal 2: Run test
-./test-device-pairing.sh
+cd /home/fograin/work1/vidsync
+./test-device-pairing.sh              # Uses defaults: port 3001, 3002, 60 seconds
+./test-device-pairing.sh 120          # Custom: 120 second test
+./test-device-pairing.sh 3001 3002 120  # Custom ports and duration
 ```
 
-### Full Test (Two Devices)
+**Expected Output:**
+```
+[INFO] ==========================================
+[INFO] Vidsync Device Pairing Test
+[INFO] ==========================================
+[✓] Test directories created
+[✓] Syncthing API is ready
+[✓] API Key: 2thLAHay9i...
+[✓] Device ID: JVYXTTV-2EHG5R5-R7LMCPC-Z5CZLM4-EFVUNZD-VFIUNG5-YCXBT5H-BGNSSA5
+[INFO] Found 1 configured folder(s)
+[✓] Test file created
+[60/60] Status: idle | Need: 0 bytes, 0 files
+[✓] Sync complete!
+[✓] TEST PASSED
+```
+
+### Full Test (Two Physical Devices)
 1. Follow PHASE 1-5 in `TESTING_DEVICE_PAIRING.md`
 2. Create test files on Device A
 3. Verify appearance on Device B
 4. Monitor via Syncthing Web UI: http://localhost:8384
+5. Device IDs will be different (one per machine)
 
 ## Known Limitations
 

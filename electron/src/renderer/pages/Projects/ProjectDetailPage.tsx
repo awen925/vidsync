@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { cloudAPI } from '../../hooks/useCloudApi';
+import { cloudAPI, withRetry } from '../../hooks/useCloudApi';
 import SetupWizard from '../../components/SetupWizard';
 
 interface Project {
@@ -13,6 +13,15 @@ interface Device {
   id: string;
   device_id: string;
   device_name: string;
+}
+
+interface RetryState {
+  isRetrying: boolean;
+  retryCount: number;
+  maxRetries: number;
+  nextRetryAt: number | null;
+  countdownSeconds: number;
+  lastError: string | null;
 }
 
 const ProjectDetailPage: React.FC = () => {
@@ -33,6 +42,14 @@ const ProjectDetailPage: React.FC = () => {
   const [files, setFiles] = useState<Array<{ name: string; isDirectory: boolean }>>([]);
   const [fileStatuses, setFileStatuses] = useState<Record<string, 'red' | 'yellow' | 'green'>>({});
   const [fileProgress, setFileProgress] = useState<Record<string, number>>({});
+  const [retryState, setRetryState] = useState<RetryState>({
+    isRetrying: false,
+    retryCount: 0,
+    maxRetries: 3,
+    nextRetryAt: null,
+    countdownSeconds: 0,
+    lastError: null,
+  });
 
   const fetchProject = async () => {
     try {
@@ -76,6 +93,20 @@ const ProjectDetailPage: React.FC = () => {
     const tid = setInterval(poll, 3000);
     return () => { mounted = false; clearInterval(tid); };
   }, [projectId]);
+
+  // Countdown timer for retry attempts
+  useEffect(() => {
+    if (!retryState.isRetrying || retryState.countdownSeconds <= 0) return;
+    
+    const timer = setInterval(() => {
+      setRetryState(prev => ({
+        ...prev,
+        countdownSeconds: Math.max(0, prev.countdownSeconds - 1),
+      }));
+    }, 1000);
+    
+    return () => clearInterval(timer);
+  }, [retryState.isRetrying, retryState.countdownSeconds]);
 
   useEffect(() => {
     if (project && (project as any).local_path) {
@@ -395,26 +426,86 @@ const ProjectDetailPage: React.FC = () => {
                 <div style={{ marginTop: 8, marginBottom: 12, padding: 10, backgroundColor: '#F0F9FF', borderRadius: 4, border: '1px solid #BAE6FD' }}>
                   <div style={{ marginBottom: 8 }}>
                     <button 
-                      className="bg-purple-600 text-white px-3 py-1 rounded"
+                      className="bg-purple-600 text-white px-3 py-1 rounded disabled:opacity-50"
+                      disabled={retryState.isRetrying}
                       onClick={async () => {
                         setPairingStatus('Generating invite code...');
+                        setRetryState({
+                          isRetrying: true,
+                          retryCount: 0,
+                          maxRetries: 3,
+                          nextRetryAt: null,
+                          countdownSeconds: 0,
+                          lastError: null,
+                        });
+
                         try {
-                          const resp = await cloudAPI.post('/pairings', {
-                            projectId,
-                            fromDeviceId: deviceId,
-                            expiresIn: 3600
-                          });
+                          const resp = await withRetry(
+                            () => cloudAPI.post('/pairings', {
+                              projectId,
+                              fromDeviceId: deviceId,
+                              expiresIn: 3600
+                            }),
+                            {
+                              maxRetries: 3,
+                              initialDelayMs: 1000,
+                              maxDelayMs: 8000,
+                              jitter: true,
+                              onRetry: (attempt, error, nextDelayMs) => {
+                                const nextRetryAt = Date.now() + nextDelayMs;
+                                setRetryState(prev => ({
+                                  ...prev,
+                                  retryCount: attempt,
+                                  nextRetryAt,
+                                  countdownSeconds: Math.ceil(nextDelayMs / 1000),
+                                  lastError: error.message,
+                                }));
+                                setPairingStatus(`⟳ Retrying (attempt ${attempt}/3) in ${Math.ceil(nextDelayMs / 1000)}s...`);
+                              },
+                              onError: (error) => {
+                                setRetryState(prev => ({
+                                  ...prev,
+                                  isRetrying: false,
+                                  lastError: error.message,
+                                }));
+                              },
+                            }
+                          );
+
                           if (resp.data?.token) {
                             setCreatedToken(resp.data.token);
                             setPairingStatus(`✓ Invite created! Share code: ${resp.data.token}`);
+                            setRetryState(prev => ({ ...prev, isRetrying: false, retryCount: 0 }));
                           }
                         } catch (e) {
-                          setPairingStatus('Failed to generate invite: ' + String(e));
+                          const errorMsg = String(e);
+                          setPairingStatus(`✗ Failed to generate invite: ${errorMsg}`);
+                          setRetryState(prev => ({
+                            ...prev,
+                            isRetrying: false,
+                            lastError: errorMsg,
+                          }));
                         }
                       }}
                     >
-                      Generate Invite Code
+                      {retryState.isRetrying ? '⟳ Retrying...' : 'Generate Invite Code'}
                     </button>
+                    {retryState.isRetrying && retryState.countdownSeconds > 0 && (
+                      <span style={{ marginLeft: 12, color: '#6366F1', fontSize: '0.9em' }}>
+                        Retry {retryState.retryCount}/3 in {retryState.countdownSeconds}s
+                      </span>
+                    )}
+                    {retryState.lastError && !retryState.isRetrying && (
+                      <button 
+                        onClick={() => {
+                          setRetryState(prev => ({ ...prev, lastError: null }));
+                          setPairingStatus(null);
+                        }}
+                        className="ml-3 bg-gray-300 text-gray-800 px-2 py-1 rounded text-sm"
+                      >
+                        Dismiss
+                      </button>
+                    )}
                   </div>
                   
                   {createdToken && (

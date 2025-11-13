@@ -138,9 +138,16 @@ log_info ""
 log_info "Retrieving device ID..."
 
 DEVICE_INFO=$(curl -s -H "X-API-Key: $API_KEY" http://localhost:8384/rest/system/status)
-DEVICE_ID=$(echo "$DEVICE_INFO" | grep -o '"myID":"[^"]*' | cut -d'"' -f4)
 
-if [ -z "$DEVICE_ID" ]; then
+# Extract myID from JSON response using grep or jq if available
+if command -v jq &> /dev/null; then
+  DEVICE_ID=$(echo "$DEVICE_INFO" | jq -r '.myID')
+else
+  # Fallback to grep for systems without jq
+  DEVICE_ID=$(echo "$DEVICE_INFO" | grep -o '"myID":"[^"]*' | cut -d'"' -f4)
+fi
+
+if [ -z "$DEVICE_ID" ] || [ "$DEVICE_ID" = "null" ]; then
   log_error "Could not retrieve device ID"
   log_info "Response: $DEVICE_INFO"
   exit 1
@@ -156,7 +163,13 @@ log_info ""
 log_info "Checking Syncthing configuration..."
 
 FOLDERS=$(curl -s -H "X-API-Key: $API_KEY" http://localhost:8384/rest/config/folders)
-FOLDER_COUNT=$(echo "$FOLDERS" | grep -o '"id"' | wc -l)
+
+# Count folders using proper JSON parsing
+if command -v jq &> /dev/null; then
+  FOLDER_COUNT=$(echo "$FOLDERS" | jq 'length')
+else
+  FOLDER_COUNT=$(echo "$FOLDERS" | grep -o '"id"' | wc -l)
+fi
 
 log_info "Found $FOLDER_COUNT configured folder(s)"
 
@@ -188,9 +201,16 @@ while [ $(date +%s) -lt $END_TIME ]; do
   # Check folder status
   FOLDER_STATUS=$(curl -s -H "X-API-Key: $API_KEY" "http://localhost:8384/rest/db/status?folder=default")
   
-  SYNCING=$(echo "$FOLDER_STATUS" | grep -o '"state":"[^"]*' | cut -d'"' -f4 || echo "unknown")
-  NEED_BYTES=$(echo "$FOLDER_STATUS" | grep -o '"needBytes":[0-9]*' | cut -d':' -f2 || echo "unknown")
-  NEED_FILES=$(echo "$FOLDER_STATUS" | grep -o '"needFiles":[0-9]*' | cut -d':' -f2 || echo "unknown")
+  # Parse JSON with jq if available, otherwise use grep
+  if command -v jq &> /dev/null; then
+    SYNCING=$(echo "$FOLDER_STATUS" | jq -r '.state // "unknown"')
+    NEED_BYTES=$(echo "$FOLDER_STATUS" | jq -r '.needBytes // 0')
+    NEED_FILES=$(echo "$FOLDER_STATUS" | jq -r '.needFiles // 0')
+  else
+    SYNCING=$(echo "$FOLDER_STATUS" | grep -o '"state":"[^"]*' | cut -d'"' -f4 || echo "unknown")
+    NEED_BYTES=$(echo "$FOLDER_STATUS" | grep -o '"needBytes":[0-9]*' | cut -d':' -f2 || echo "0")
+    NEED_FILES=$(echo "$FOLDER_STATUS" | grep -o '"needFiles":[0-9]*' | cut -d':' -f2 || echo "0")
+  fi
   
   ELAPSED=$(($(date +%s) - START_TIME))
   
@@ -213,8 +233,15 @@ log_info ""
 log_info "Verifying test results..."
 
 FINAL_STATUS=$(curl -s -H "X-API-Key: $API_KEY" "http://localhost:8384/rest/db/status?folder=default")
-FINAL_NEED_BYTES=$(echo "$FINAL_STATUS" | grep -o '"needBytes":[0-9]*' | cut -d':' -f2 || echo "0")
-FINAL_NEED_FILES=$(echo "$FINAL_STATUS" | grep -o '"needFiles":[0-9]*' | cut -d':' -f2 || echo "0")
+
+# Parse JSON with jq if available, otherwise use grep
+if command -v jq &> /dev/null; then
+  FINAL_NEED_BYTES=$(echo "$FINAL_STATUS" | jq -r '.needBytes // 0')
+  FINAL_NEED_FILES=$(echo "$FINAL_STATUS" | jq -r '.needFiles // 0')
+else
+  FINAL_NEED_BYTES=$(echo "$FINAL_STATUS" | grep -o '"needBytes":[0-9]*' | cut -d':' -f2 || echo "0")
+  FINAL_NEED_FILES=$(echo "$FINAL_STATUS" | grep -o '"needFiles":[0-9]*' | cut -d':' -f2 || echo "0")
+fi
 
 if [ "$FINAL_NEED_BYTES" = "0" ] && [ "$FINAL_NEED_FILES" = "0" ]; then
   log_success "All files synced successfully!"

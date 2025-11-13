@@ -1,63 +1,213 @@
-# Quick Start: Deploy & Test Nebula + Syncthing
+# Quick Test Guide - Device Pairing (Updated)
 
-## TL;DR - 5 Minute Setup
+## 🚀 Start Here
 
-### Step 1: Copy CA from AWS (1 min)
+### Step 1: Start the Vidsync App
+```bash
+cd /home/fograin/work1/vidsync/electron
+npm run dev
+```
 
+**Wait for this message** (15-20 seconds):
+```
+> Syncthing server running on http://localhost:8384
+```
+
+### Step 2: Run the Automated Test
+**In a NEW terminal:**
 ```bash
 cd /home/fograin/work1/vidsync
-
-# Replace YOUR_LIGHTHOUSE_IP with actual IP
-scp -i your-key.pem ec2-user@YOUR_LIGHTHOUSE_IP:/etc/nebula/ca.crt cloud/bin/ca.crt
-scp -i your-key.pem ec2-user@YOUR_LIGHTHOUSE_IP:/etc/nebula/ca.key cloud/bin/ca.key
-
-# Verify
-chmod 644 cloud/bin/ca.crt
-chmod 600 cloud/bin/ca.key
-ls -la cloud/bin/ca.* 
+./test-device-pairing.sh
 ```
 
-### Step 2: Start Cloud Backend (1 min)
+## ✅ Expected Output
 
+```
+[INFO] ==========================================
+[INFO] Vidsync Device Pairing Test
+[INFO] ==========================================
+[INFO] Device A Port: 3001
+[INFO] Device B Port: 3002
+[INFO] Test Duration: 60 seconds
+[INFO]
+[INFO] Creating test directories...
+[✓] Test directories created
+[INFO]
+[INFO] Checking Syncthing availability on localhost:8384...
+[✓] Syncthing API is ready
+[INFO]
+[INFO] Retrieving Syncthing API key...
+[✓] API Key: 2thLAHay9i...
+[INFO]
+[INFO] Retrieving device ID...
+[✓] Device ID: JVYXTTV-2EHG5R5-R7LMCPC-Z5CZLM4-EFVUNZD-VFIUNG5-YCXBT5H-BGNSSA5
+[INFO]
+[INFO] Checking Syncthing configuration...
+[INFO] Found 1 configured folder(s)
+[INFO]
+[INFO] Testing file creation and transfer...
+[INFO] Creating test file on Device A: test-1731486450.txt
+[✓] Test file created
+[INFO]
+[INFO] Monitoring sync progress for 60 seconds...
+[INFO] [0/60] Status: idle | Need: 0 bytes, 0 files
+[INFO] [3/60] Status: idle | Need: 0 bytes, 0 files
+[INFO] [6/60] Status: idle | Need: 0 bytes, 0 files
+[✓] Sync complete!
+[INFO]
+[INFO] Verifying test results...
+[✓] All files synced successfully!
+[✓]
+[✓] TEST PASSED
+[✓]
+[INFO] ==========================================
+[INFO] Test Summary
+[INFO] ==========================================
+[INFO] Device ID: JVYXTTV-2EHG5R5-R7LMCPC-Z5CZLM4-EFVUNZD-VFIUNG5-YCXBT5H-BGNSSA5
+[INFO] Test File: test-1731486450.txt
+[INFO] File Size: 82 bytes
+[INFO] Duration: 60 seconds
+[INFO] Final Need Bytes: 0
+[INFO] Final Need Files: 0
+```
+
+## 🔧 Customization
+
+### Run with Custom Duration
 ```bash
-cd cloud
-npm start
-# Should print: Server running on port 3000
+./test-device-pairing.sh 120        # 120 second test
+./test-device-pairing.sh 300        # 300 second test (for larger files)
 ```
 
-### Step 3: Start Electron Frontend (1 min)
-
+### Run with Custom Ports
 ```bash
-cd ../electron
-npm start
-# Electron window should open
+./test-device-pairing.sh 3001 3002 120   # Custom device ports and duration
 ```
 
-### Step 4: Create Test Project (1 min)
+## ❌ Troubleshooting
 
-1. Navigate to Projects page
-2. Create project:
-   - Name: "Test Project"
-   - Folder: Select any local folder (e.g., ~/test-sync)
-3. Click "Create Project"
-4. Auto-redirected to project detail
+### "Syncthing API not available"
+**Problem**: Syncthing hasn't started yet or is not running
 
-### Step 5: Test Features (1 min)
+**Solution**:
+```bash
+# Make sure app is running in Terminal 1
+# Terminal 1 should show: "Syncthing server running on http://localhost:8384"
+# Wait at least 15-20 seconds after seeing this message before running test
+```
 
-**Syncthing Status**:
-- Should see status badge next to folder path
-- Within ~5 seconds, should turn green: "Syncthing folder configured"
+### "Could not retrieve device ID"
+**Problem**: Syncthing API is running but response format is unexpected
 
-**Nebula Config**:
-- Click "Generate Nebula Config" button
-- Should show: "✓ Config generated at: /path/to/nebula/{id}"
-- Click "Open Nebula Folder"
-- File explorer opens showing:
-  - `nebula.yml`
-  - `ca.crt`
-  - `node.crt` (placeholder)
-  - `node.key` (placeholder)
-  - `README.md`
+**Check**: 
+```bash
+# Manually test the API in a terminal
+curl -H "X-API-Key: $(grep -o '<apikey>[^<]*' ~/.config/vidsync/syncthing/shared/config.xml | cut -d'>' -f2)" \
+  http://localhost:8384/rest/system/status | jq .myID
+```
+
+Should output a Device ID like: `"JVYXTTV-2EHG5R5-R7LMCPC-Z5CZLM4-EFVUNZD-VFIUNG5-YCXBT5H-BGNSSA5"`
+
+### "Could not extract API key from config"
+**Problem**: Config file doesn't exist
+
+**Solution**:
+```bash
+# Start the app at least once to generate config
+cd /home/fograin/work1/vidsync/electron
+npm run dev
+# Let it run for 10 seconds to create config, then Ctrl+C
+```
+
+## 📊 What the Test Does
+
+1. **Setup** (2 sec)
+   - Creates temporary test directories
+   - Verifies Syncthing is running
+
+2. **API Verification** (1 sec)
+   - Retrieves API key from config
+   - Verifies authentication works
+
+3. **Device Discovery** (1 sec)
+   - Gets Device ID from Syncthing
+   - Gets list of configured folders
+
+4. **Test Execution** (5-60 sec depending on duration)
+   - Creates test file
+   - Monitors sync progress
+   - Checks needBytes and needFiles
+
+5. **Results** (1 sec)
+   - Verifies all files synced
+   - Reports success or warnings
+   - Cleans up test files
+
+## 📈 Success Criteria
+
+✅ **Must Pass**:
+- Device ID retrieved successfully
+- Syncthing API responds correctly
+- Test file created
+- Sync completes with 0 needBytes and 0 needFiles
+
+✅ **Nice to Have**:
+- Sync completes in <10 seconds
+- No errors or warnings in output
+- Test runs multiple times without issues
+
+## 🚨 Real Device Testing
+
+For testing with two actual devices:
+
+1. **Device A (Initiator)**:
+   ```bash
+   cd /home/fograin/work1/vidsync/electron
+   npm run dev
+   # Copy the Device ID
+   ```
+
+2. **Device B (Acceptor)**:
+   ```bash
+   # Start Device B's app
+   cd /home/fograin/work1/vidsync/electron
+   npm run dev
+   # UI will show "Accept Device Code"
+   ```
+
+3. **In Device A's UI**:
+   - Click "Generate Invite Code"
+   - Share the code with Device B
+
+4. **In Device B's UI**:
+   - Enter the invite code
+   - Accept the pairing
+
+5. **Verify Sync**:
+   - Create files on Device A
+   - Confirm they appear on Device B
+   - Check sync status at http://localhost:8384
+
+## 📖 Related Documentation
+
+- **TESTING_DEVICE_PAIRING.md** - Full 10-phase manual testing guide
+- **TEST_SCRIPT_FIXES.md** - Technical details about the fix
+- **FIX_SUMMARY.md** - What was fixed and why
+- **TASK5_COMPLETE.md** - Complete Task #5 summary
+
+## ✨ Next Steps
+
+After confirming the test works:
+
+1. ✅ **Automated Testing Works** (just verified)
+2. 🔄 **Next**: Manual testing with two devices (follow TESTING_DEVICE_PAIRING.md)
+3. 🔄 **Then**: Proceed to Task #6 (error handling & retry logic)
+
+---
+
+**Last Updated**: 2025-11-13
+**Status**: ✅ Ready for testing
+**Test Duration**: ~1 minute per run
 
 ## Manual Testing Steps
 
