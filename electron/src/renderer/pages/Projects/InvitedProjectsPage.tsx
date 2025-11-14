@@ -134,6 +134,14 @@ const InvitedProjectsPage: React.FC<InvitedProjectsPageProps> = ({ onSelectProje
   const handleConfirmDelete = async () => {
     if (!selectedProject) return;
     try {
+      // Remove from Syncthing first (non-blocking)
+      try {
+        await (window as any).api.syncthingRemoveProjectFolder(selectedProject.id);
+      } catch (syncError) {
+        console.warn('Failed to remove from Syncthing:', syncError);
+        // Continue anyway - Syncthing cleanup failure shouldn't block project deletion
+      }
+
       await cloudAPI.delete(`/projects/${selectedProject.id}`);
       setDeleteConfirmOpen(false);
       await fetchInvitedProjects();

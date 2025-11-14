@@ -56,7 +56,7 @@ const createWindow = () => {
       nodeIntegration: false,
       contextIsolation: true,
     },
-    icon: path.join(__dirname, '../renderer/assets/icon.png'),
+    icon: path.join(__dirname, '../../public/icons/logo1.png'),
   });
 
   // In production, load the React build output from the build folder
@@ -235,6 +235,10 @@ const setupIPC = () => {
 
   ipcMain.handle('syncthing:stopForProject', async (_ev, projectId: string) => {
     return syncthingManager.stopForProject(projectId);
+  });
+
+  ipcMain.handle('syncthing:removeProjectFolder', async (_ev, projectId: string) => {
+    return syncthingManager.removeProjectFolder(projectId);
   });
 
   ipcMain.handle('syncthing:statusForProject', async (_ev, projectId: string) => {

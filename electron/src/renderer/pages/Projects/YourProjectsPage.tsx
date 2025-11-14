@@ -271,6 +271,15 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
   const handleDeleteProject = async () => {
     if (!selectedMenuProject) return;
     try {
+      // Remove from Syncthing first (non-blocking)
+      try {
+        await (window as any).api.syncthingRemoveProjectFolder(selectedMenuProject.id);
+      } catch (syncError) {
+        console.warn('Failed to remove from Syncthing:', syncError);
+        // Continue anyway - Syncthing cleanup failure shouldn't block project deletion
+      }
+
+      // Delete from backend
       await cloudAPI.delete(`/projects/${selectedMenuProject.id}`);
       handleMenuClose();
       await fetchProjects();

@@ -160,6 +160,29 @@ export class SyncthingManager {
     });
   }
 
+  private async removeFolder(apiKey: string, projectId: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      const req = https.request(
+        {
+          hostname: 'localhost',
+          port: this.SYNCTHING_API_PORT,
+          path: `/rest/config/folders/${projectId}`,
+          method: 'DELETE',
+          headers: {
+            'X-API-Key': apiKey,
+          },
+          rejectUnauthorized: false,
+        },
+        (res) => {
+          resolve(res.statusCode === 200 || res.statusCode === 204);
+        }
+      );
+
+      req.on('error', () => resolve(false));
+      req.end();
+    });
+  }
+
   async startForProject(projectId: string, localPath?: string): Promise<{ success: boolean; pid?: number; homeDir?: string; error?: string }> {
     // If project's already configured, return
     if (this.instances.has(projectId)) {
@@ -258,6 +281,20 @@ export class SyncthingManager {
       info.process.kill();
       this.instances.delete(projectId);
       return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e?.message || String(e) };
+    }
+  }
+
+  async removeProjectFolder(projectId: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const info = this.instances.get(projectId);
+      if (!info || !info.apiKey) {
+        return { success: true }; // No folder to remove if no instance
+      }
+
+      const removed = await this.removeFolder(info.apiKey, projectId);
+      return { success: removed };
     } catch (e: any) {
       return { success: false, error: e?.message || String(e) };
     }

@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('api', {
   deviceGetInfo: () => ipcRenderer.invoke('device:getInfo'),
   syncthingStartForProject: (projectId: string, localPath?: string) => ipcRenderer.invoke('syncthing:startForProject', { projectId, localPath }),
   syncthingStopForProject: (projectId: string) => ipcRenderer.invoke('syncthing:stopForProject', projectId),
+  syncthingRemoveProjectFolder: (projectId: string) => ipcRenderer.invoke('syncthing:removeProjectFolder', projectId),
   syncthingStatusForProject: (projectId: string) => ipcRenderer.invoke('syncthing:statusForProject', projectId),
   syncthingOpenGui: (projectId: string) => ipcRenderer.invoke('syncthing:openGui', projectId),
   syncthingGetDeviceId: (projectId: string) => ipcRenderer.invoke('syncthing:getDeviceId', projectId),
