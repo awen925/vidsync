@@ -525,4 +525,131 @@ router.get('/:projectId/files', authMiddleware, async (req: Request, res: Respon
   }
 });
 
+// GET /api/projects/:projectId/files-paginated - Paginated remote files for invitees
+router.get('/:projectId/files-paginated', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { projectId } = req.params;
+    const { path: folderPath = '/', page = '1', per_page = '100' } = req.query;
+    const userId = (req as any).user.id;
+
+    // Parse pagination params
+    const pageNum = Math.max(1, parseInt(String(page), 10) || 1);
+    const perPage = Math.min(500, Math.max(10, parseInt(String(per_page), 10) || 100)); // Cap at 500 items
+
+    // Fetch project
+    const { data: project, error: projectErr } = await supabase
+      .from('projects')
+      .select('*')
+      .eq('id', projectId)
+      .single();
+
+    if (projectErr || !project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    // Check access: owner or accepted member
+    const isOwner = project.owner_id === userId;
+    const { data: member } = await supabase
+      .from('project_members')
+      .select('*')
+      .eq('project_id', projectId)
+      .eq('user_id', userId)
+      .eq('status', 'accepted')
+      .single();
+
+    if (!isOwner && !member) {
+      return res.status(403).json({ error: 'Access denied to project' });
+    }
+
+    // Build path filter for folder navigation
+    // If path is '/', show top-level files
+    // Otherwise, show files whose path starts with folderPath
+    const pathFilter = folderPath === '/' ? '%' : `${String(folderPath)}%`;
+
+    // Fetch total count
+    const { count } = await supabase
+      .from('remote_files')
+      .select('*', { count: 'exact', head: true })
+      .eq('project_id', projectId)
+      .like('path', pathFilter)
+      .is('deleted_by', null);
+
+    // Fetch paginated files
+    const offset = (pageNum - 1) * perPage;
+    const { data: files, error: filesErr } = await supabase
+      .from('remote_files')
+      .select('*')
+      .eq('project_id', projectId)
+      .like('path', pathFilter)
+      .is('deleted_by', null)
+      .order('is_directory', { ascending: false })  // Folders first
+      .order('name')                                 // Then by name
+      .range(offset, offset + perPage - 1);
+
+    if (filesErr) {
+      console.error('Failed to fetch remote files:', filesErr.message);
+      return res.status(500).json({ error: 'Failed to fetch files' });
+    }
+
+    const totalCount = count || 0;
+    const totalPages = Math.ceil(totalCount / perPage);
+    const hasMore = pageNum < totalPages;
+
+    res.json({
+      success: true,
+      files: files || [],
+      pagination: {
+        page: pageNum,
+        per_page: perPage,
+        total: totalCount,
+        total_pages: totalPages,
+        has_more: hasMore,
+      },
+      path: folderPath,
+    });
+  } catch (error) {
+    console.error('Get paginated files exception:', error);
+    res.status(500).json({ error: 'Failed to fetch files' });
+  }
+});
+
+// POST /api/projects/:projectId/files-sync - Scan and store file metadata from Syncthing folder
+// Called by owner's device to publish file list for invitees
+router.post('/:projectId/files-sync', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { projectId } = req.params;
+    const userId = (req as any).user.id;
+
+    // Verify ownership
+    const { data: project, error: projectErr } = await supabase
+      .from('projects')
+      .select('*')
+      .eq('id', projectId)
+      .single();
+
+    if (projectErr || !project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    if (project.owner_id !== userId) {
+      return res.status(403).json({ error: 'Only project owner can sync files' });
+    }
+
+    // For now, return a message indicating this would scan the Syncthing folder
+    // In production, this would:
+    // 1. Call Syncthing REST API to list files
+    // 2. Store metadata in remote_files table
+    // 3. Update sync status badges
+    res.json({
+      success: true,
+      message: 'File sync initiated',
+      note: 'In production, this endpoint would scan the Syncthing folder and update file metadata',
+    });
+  } catch (error) {
+    console.error('File sync exception:', error);
+    res.status(500).json({ error: 'Failed to sync files' });
+  }
+});
+
 export default router;
+
