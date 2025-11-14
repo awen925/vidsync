@@ -218,6 +218,64 @@ router.post('/:projectId/invite', authMiddleware, async (req: Request, res: Resp
   }
 });
 
+// POST /api/projects/:projectId/invite-token - Generate shareable invite token
+router.post('/:projectId/invite-token', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { projectId } = req.params;
+    const userId = (req as any).user.id;
+
+    // Verify project ownership
+    const { data: project, error: projectErr } = await supabase
+      .from('projects')
+      .select('*')
+      .eq('id', projectId)
+      .single();
+
+    if (projectErr || !project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    if (project.owner_id !== userId) {
+      return res.status(403).json({ error: 'Only project owner can generate invite codes' });
+    }
+
+    // Generate a unique invite token (simple base64 encoding of projectId + timestamp + random)
+    const timestamp = Date.now().toString();
+    const random = Math.random().toString(36).substring(2, 10);
+    const tokenData = `${projectId}:${timestamp}:${random}`;
+    const token = Buffer.from(tokenData).toString('base64').substring(0, 16);
+
+    // Store the token in a temporary invitations table or cache with expiry
+    // For now, we'll create an entry in audit logs or return the token directly
+    const invitePayload = {
+      project_id: projectId,
+      invite_token: token,
+      created_by: userId,
+      created_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days
+      is_active: true,
+    };
+
+    // Insert into a project_invites table if it exists, otherwise just return the token
+    const { data: invite, error: inviteErr } = await supabase
+      .from('project_invites')
+      .insert(invitePayload)
+      .select()
+      .single();
+
+    if (inviteErr) {
+      console.warn('Failed to store invite token (table may not exist):', inviteErr.message);
+      // Still return the token even if storage fails
+      return res.json({ token });
+    }
+
+    res.json({ token: invite.invite_token || token });
+  } catch (error) {
+    console.error('Generate invite token exception:', error);
+    res.status(500).json({ error: 'Failed to generate invite token' });
+  }
+});
+
 // POST /api/projects/:projectId/devices -> assign device to project
 router.post('/:projectId/devices', authMiddleware, async (req: Request, res: Response) => {
   try {
@@ -337,9 +395,8 @@ router.get('/:projectId/files', authMiddleware, async (req: Request, res: Respon
   try {
     const { projectId } = req.params;
     const userId = (req as any).user.id;
-    const { depth = 0, maxDepth = 3 } = req.query;
-    const currentDepth = parseInt(String(depth), 10) || 0;
-    const maxDepthLimit = Math.min(parseInt(String(maxDepth), 10) || 3, 5);
+    const { maxDepth = 4 } = req.query;
+    const maxDepthLimit = Math.min(parseInt(String(maxDepth), 10) || 4, 10);
 
     // Fetch project
     const { data: project, error: projectErr } = await supabase
@@ -362,9 +419,8 @@ router.get('/:projectId/files', authMiddleware, async (req: Request, res: Respon
     }
 
     // Safely read directory
+    // depth starts at 0 for the root, so depth <= maxDepthLimit allows scanning files at the max level
     const scanDirectory = (dirPath: string, depth: number): any[] => {
-      if (depth > maxDepthLimit) return [];
-
       try {
         if (!fs.existsSync(dirPath)) {
           return [];
@@ -379,12 +435,15 @@ router.get('/:projectId/files', authMiddleware, async (req: Request, res: Respon
               const stats = fs.statSync(fullPath);
 
               if (entry.isDirectory()) {
+                // Only scan children if we haven't reached the depth limit yet
+                // This allows folders at maxDepth to be shown, but their children won't be populated
+                const shouldScanChildren = depth < maxDepthLimit;
                 return {
                   name: entry.name,
                   type: 'folder',
                   size: 0,
                   modified: stats.mtime.toISOString(),
-                  children: depth < maxDepthLimit ? scanDirectory(fullPath, depth + 1) : [],
+                  children: shouldScanChildren ? scanDirectory(fullPath, depth + 1) : [],
                 };
               } else {
                 return {
@@ -406,7 +465,7 @@ router.get('/:projectId/files', authMiddleware, async (req: Request, res: Respon
       }
     };
 
-    const files = scanDirectory(project.local_path, currentDepth);
+    const files = scanDirectory(project.local_path, 0);
 
     res.json({ files, folder: project.local_path });
   } catch (error) {

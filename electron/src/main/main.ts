@@ -12,6 +12,7 @@ import { AgentController } from './agentController';
 import { SyncthingManager } from './syncthingManager';
 import { NebulaManager } from './nebulaManager';
 import { logger } from './logger';
+import { listDirectory, scanDirectoryTree, scanDirectoryFlat, getDirectoryStats, FileItem, DirectoryEntry } from './fileScanner';
 
 let mainWindow: BrowserWindow | null;
 const agentController = new AgentController();
@@ -130,6 +131,60 @@ const setupIPC = () => {
       return { path: dirPath, entries: out };
     } catch (e: any) {
       return { error: e?.message || String(e) };
+    }
+  });
+
+  // FS: list directory (immediate children only - preferred method for navigation)
+  ipcMain.handle('fs:listDirectory', async (_ev, dirPath: string, includeHidden?: boolean) => {
+    try {
+      logger.debug(`Listing directory: ${dirPath}`);
+      const entries = await listDirectory(dirPath, includeHidden ?? false);
+      return { success: true, entries, path: dirPath };
+    } catch (e: any) {
+      logger.error(`Failed to list directory ${dirPath}:`, e);
+      return { success: false, error: e?.message || String(e), entries: [] };
+    }
+  });
+
+  // FS: scan directory tree recursively (for local projects)
+  ipcMain.handle('fs:scanDirTree', async (_ev, dirPath: string, options?: any) => {
+    try {
+      logger.debug(`Scanning directory tree: ${dirPath}`);
+      const files = await scanDirectoryTree(dirPath, {
+        maxDepth: options?.maxDepth ?? 5,
+        includeHidden: options?.includeHidden ?? false,
+        includeDotFiles: options?.includeDotFiles ?? false,
+      });
+      return { success: true, files, path: dirPath };
+    } catch (e: any) {
+      logger.error(`Failed to scan directory tree ${dirPath}:`, e);
+      return { success: false, error: e?.message || String(e), files: [] };
+    }
+  });
+
+  // FS: scan directory (flat, no recursion)
+  ipcMain.handle('fs:scanDirFlat', async (_ev, dirPath: string) => {
+    try {
+      logger.debug(`Scanning directory (flat): ${dirPath}`);
+      const files = await scanDirectoryFlat(dirPath);
+      return { success: true, files, path: dirPath };
+    } catch (e: any) {
+      logger.error(`Failed to scan directory ${dirPath}:`, e);
+      return { success: false, error: e?.message || String(e), files: [] };
+    }
+  });
+
+  // FS: get directory statistics
+  ipcMain.handle('fs:getDirStats', async (_ev, dirPath: string) => {
+    try {
+      const stats = await getDirectoryStats(dirPath);
+      if (!stats) {
+        return { success: false, error: 'Directory not found' };
+      }
+      return { success: true, stats };
+    } catch (e: any) {
+      logger.error(`Failed to get directory stats ${dirPath}:`, e);
+      return { success: false, error: e?.message || String(e) };
     }
   });
 

@@ -57,6 +57,7 @@ interface FileItem {
   type: 'file' | 'folder';
   size?: number;
   modified?: string;
+  fullPath?: string; // Added for IPC-loaded files
   children?: FileItem[];
 }
 
@@ -115,12 +116,33 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
   const fetchProjectFiles = async (projectId: string) => {
     setFilesLoading(true);
     try {
-      const response = await cloudAPI.get(`/projects/${projectId}/files`);
-      const filesData = response.data.files || [];
-      setFiles(filesData);
-      setCurrentPath(filesData);
-      setPathBreadcrumbs(['']);
-      setNavigationHistory([filesData]);
+      // Check if this is a local project by looking for local_path
+      const project = projects.find(p => p.id === projectId);
+      
+      if (project?.local_path) {
+        // Local project - use IPC for direct OS file access
+        const result = await (window as any).api.fsListDirectory(project.local_path, false);
+        if (result.success && result.entries) {
+          setFiles(result.entries);
+          setCurrentPath(result.entries);
+          setPathBreadcrumbs(['']);
+          setNavigationHistory([result.entries]);
+        } else {
+          console.error('Failed to list directory:', result.error);
+          setFiles([]);
+          setCurrentPath([]);
+          setPathBreadcrumbs(['']);
+          setNavigationHistory([]);
+        }
+      } else {
+        // Remote/invited project - use API
+        const response = await cloudAPI.get(`/projects/${projectId}/files`);
+        const filesData = response.data.files || [];
+        setFiles(filesData);
+        setCurrentPath(filesData);
+        setPathBreadcrumbs(['']);
+        setNavigationHistory([filesData]);
+      }
     } catch (error) {
       console.error('Failed to fetch files:', error);
       setFiles([]);
@@ -132,11 +154,30 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
     }
   };
 
-  const handleOpenFolder = (folder: FileItem) => {
-    if (folder.type === 'folder' && folder.children) {
-      setCurrentPath(folder.children);
-      setPathBreadcrumbs([...pathBreadcrumbs, folder.name]);
-      setNavigationHistory([...navigationHistory, folder.children]);
+  const handleOpenFolder = async (folder: FileItem & { fullPath?: string }) => {
+    if (folder.type === 'folder') {
+      // For local projects with fullPath, use IPC to load the folder
+      const project = selectedProject;
+      if (project?.local_path && folder.fullPath) {
+        try {
+          setFilesLoading(true);
+          const result = await (window as any).api.fsListDirectory(folder.fullPath, false);
+          if (result.success && result.entries) {
+            setCurrentPath(result.entries);
+            setPathBreadcrumbs([...pathBreadcrumbs, folder.name]);
+            setNavigationHistory([...navigationHistory, result.entries]);
+          }
+        } catch (error) {
+          console.error('Failed to open folder:', error);
+        } finally {
+          setFilesLoading(false);
+        }
+      } else if (folder.children) {
+        // For remote projects or no fullPath, use cached children
+        setCurrentPath(folder.children);
+        setPathBreadcrumbs([...pathBreadcrumbs, folder.name]);
+        setNavigationHistory([...navigationHistory, folder.children]);
+      }
     }
   };
 
