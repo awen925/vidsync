@@ -15,21 +15,31 @@ import {
   DialogActions,
   TextField,
   Stack,
-  Chip,
   IconButton,
   Menu,
   MenuItem,
   CircularProgress,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Tab,
+  Tabs,
+  Alert,
 } from '@mui/material';
 import {
   Plus,
   MoreVertical,
-  Share2,
   Trash2,
   Folder,
   File,
   Copy,
   Check,
+  ArrowLeft,
+  Users,
+  Link as LinkIcon,
 } from 'lucide-react';
 import { cloudAPI } from '../../hooks/useCloudApi';
 
@@ -43,11 +53,11 @@ interface Project {
 }
 
 interface FileItem {
-  id: string;
   name: string;
   type: 'file' | 'folder';
   size?: number;
-  modified_at?: string;
+  modified?: string;
+  children?: FileItem[];
 }
 
 interface YourProjectsPageProps {
@@ -58,16 +68,22 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [files, setFiles] = useState<FileItem[]>([]);
+  const [currentPath, setCurrentPath] = useState<FileItem[]>([]);
+  const [pathBreadcrumbs, setPathBreadcrumbs] = useState<string[]>([]);
+  const [navigationHistory, setNavigationHistory] = useState<FileItem[][]>([]);
   const [loading, setLoading] = useState(false);
   const [filesLoading, setFilesLoading] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
-  const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
   const [inviteCode, setInviteCode] = useState('');
   const [copiedCode, setCopiedCode] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [newProjectDesc, setNewProjectDesc] = useState('');
   const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
   const [selectedMenuProject, setSelectedMenuProject] = useState<Project | null>(null);
+  const [tabValue, setTabValue] = useState(0);
+  const [shareEmail, setShareEmail] = useState('');
+  const [shareEmailError, setShareEmailError] = useState('');
 
   useEffect(() => {
     fetchProjects();
@@ -99,15 +115,47 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
   const fetchProjectFiles = async (projectId: string) => {
     setFilesLoading(true);
     try {
-      // Call the /files endpoint which scans the local_path
       const response = await cloudAPI.get(`/projects/${projectId}/files`);
-      setFiles(response.data.files || []);
+      const filesData = response.data.files || [];
+      setFiles(filesData);
+      setCurrentPath(filesData);
+      setPathBreadcrumbs(['']);
+      setNavigationHistory([filesData]);
     } catch (error) {
       console.error('Failed to fetch files:', error);
       setFiles([]);
+      setCurrentPath([]);
+      setPathBreadcrumbs(['']);
+      setNavigationHistory([]);
     } finally {
       setFilesLoading(false);
     }
+  };
+
+  const handleOpenFolder = (folder: FileItem) => {
+    if (folder.type === 'folder' && folder.children) {
+      setCurrentPath(folder.children);
+      setPathBreadcrumbs([...pathBreadcrumbs, folder.name]);
+      setNavigationHistory([...navigationHistory, folder.children]);
+    }
+  };
+
+  const handleGoBack = () => {
+    if (navigationHistory.length > 1) {
+      const newHistory = navigationHistory.slice(0, -1);
+      const previousPath = newHistory[newHistory.length - 1];
+      setNavigationHistory(newHistory);
+      setCurrentPath(previousPath);
+      setPathBreadcrumbs(pathBreadcrumbs.slice(0, -1));
+    }
+  };
+
+  const formatFileSize = (bytes?: number): string => {
+    if (!bytes) return '-';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)} KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+    return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
   };
 
   const handleCreateProject = async () => {
@@ -142,7 +190,7 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
     try {
       const response = await cloudAPI.post(`/projects/${selectedProject.id}/invite-token`, {});
       setInviteCode(response.data.token);
-      setShareDialogOpen(true);
+      setInviteDialogOpen(true);
     } catch (error) {
       console.error('Failed to generate invite:', error);
     }
@@ -248,7 +296,7 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
         )}
       </Paper>
 
-      {/* Right Panel - Project Details & Files */}
+      {/* Right Panel - Project Details & File Browser */}
       <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {selectedProject ? (
           <>
@@ -262,71 +310,165 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
                 bgcolor: 'background.paper',
               }}
             >
-              <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
-                <Box>
+              <Stack direction="row" justifyContent="space-between" alignItems="start" sx={{ mb: 2 }}>
+                <Box sx={{ flex: 1 }}>
                   <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>{selectedProject.name}</Typography>
                   {selectedProject.description && (
                     <Typography variant="body2" sx={{ color: 'text.secondary' }}>{selectedProject.description}</Typography>
                   )}
                 </Box>
-                <Button
-                  variant="outlined"
-                  startIcon={<Share2 size={16} />}
-                  onClick={handleGenerateInvite}
-                  sx={{ textTransform: 'none', fontWeight: 600 }}
+                <IconButton
+                  size="small"
+                  onClick={(e) => handleMenuOpen(e, selectedProject)}
                 >
-                  Share
-                </Button>
+                  <MoreVertical size={18} />
+                </IconButton>
               </Stack>
 
-              {/* Project Info */}
-              <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap' }}>
-                {selectedProject.local_path && (
-                  <Chip
-                    icon={<Folder size={14} />}
-                    label={selectedProject.local_path}
-                    size="small"
-                    variant="outlined"
-                  />
-                )}
-                <Chip
-                  label={`${selectedProject.device_count || 0} devices`}
-                  size="small"
-                  variant="outlined"
-                />
-              </Stack>
+              {/* Tabs for Files and Shared With */}
+              <Tabs value={tabValue} onChange={(e, val) => setTabValue(val)} sx={{ mb: 1 }}>
+                <Tab label="Files" value={0} />
+                <Tab label="Shared With" value={1} />
+              </Tabs>
             </Paper>
 
-            {/* Files Section */}
-            <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
-              <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>Files</Typography>
-              
-              {filesLoading ? (
-                <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
-                  <CircularProgress />
-                </Box>
-              ) : files.length === 0 ? (
-                <Typography variant="body2" sx={{ color: 'text.secondary' }}>No files yet</Typography>
-              ) : (
-                <List sx={{ p: 0 }}>
-                  {files.map((file) => (
-                    <ListItem key={file.id} disablePadding sx={{ mb: 0.5 }}>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, width: '100%', p: 1 }}>
-                        {file.type === 'folder' ? <Folder size={18} /> : <File size={18} />}
-                        <Box sx={{ flex: 1 }}>
-                          <Typography variant="body2" sx={{ fontWeight: 500 }}>{file.name}</Typography>
-                          {file.size && (
-                            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                              {(file.size / 1024 / 1024).toFixed(2)} MB
-                            </Typography>
-                          )}
-                        </Box>
+            {/* Tab Content */}
+            {tabValue === 0 ? (
+              // FILES TAB
+              <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                {filesLoading ? (
+                  <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flex: 1 }}>
+                    <CircularProgress />
+                  </Box>
+                ) : (
+                  <>
+                    {/* Breadcrumb Navigation */}
+                    {pathBreadcrumbs.length > 1 && (
+                      <Box sx={{ p: 1.5, borderBottom: 1, borderColor: 'divider', display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Button
+                          size="small"
+                          startIcon={<ArrowLeft size={16} />}
+                          onClick={handleGoBack}
+                          sx={{ textTransform: 'none' }}
+                        >
+                          Back
+                        </Button>
+                        <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                          {pathBreadcrumbs.slice(1).join(' / ')}
+                        </Typography>
                       </Box>
-                    </ListItem>
-                  ))}
-                </List>
-              )}
-            </Box>
+                    )}
+
+                    {/* File Table */}
+                    {currentPath.length === 0 ? (
+                      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flex: 1 }}>
+                        <Typography sx={{ color: 'text.secondary' }}>No files in this folder</Typography>
+                      </Box>
+                    ) : (
+                      <TableContainer sx={{ flex: 1, overflow: 'auto' }}>
+                        <Table size="small" stickyHeader>
+                          <TableHead>
+                            <TableRow sx={{ bgcolor: 'action.hover' }}>
+                              <TableCell sx={{ fontWeight: 700 }}>Name</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 700, width: 120 }}>Size</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 700, width: 150 }}>Modified</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {currentPath.map((file, index) => (
+                              <TableRow
+                                key={`${file.name}-${index}`}
+                                hover
+                                onClick={() => file.type === 'folder' && handleOpenFolder(file)}
+                                sx={{ cursor: file.type === 'folder' ? 'pointer' : 'default' }}
+                              >
+                                <TableCell sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                  {file.type === 'folder' ? (
+                                    <>
+                                      <Folder size={16} style={{ color: '#0A66C2' }} />
+                                      <Typography sx={{ fontWeight: 500 }}>{file.name}</Typography>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <File size={16} style={{ color: '#666' }} />
+                                      <Typography>{file.name}</Typography>
+                                    </>
+                                  )}
+                                </TableCell>
+                                <TableCell align="right">
+                                  {file.type === 'file' ? formatFileSize(file.size) : '-'}
+                                </TableCell>
+                                <TableCell align="right" sx={{ fontSize: '0.875rem', color: 'text.secondary' }}>
+                                  {file.modified ? new Date(file.modified).toLocaleDateString() : '-'}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    )}
+                  </>
+                )}
+              </Box>
+            ) : (
+              // SHARED WITH TAB
+              <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'auto', p: 2 }}>
+                <Alert severity="info" sx={{ mb: 2 }}>
+                  <Typography variant="body2">Share this project with others using an invite code.</Typography>
+                </Alert>
+
+                <Stack spacing={2}>
+                  <Box>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>Generate Invite Code</Typography>
+                    <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1.5 }}>
+                      Create a shareable link to invite others to this project.
+                    </Typography>
+                    <Button
+                      variant="contained"
+                      startIcon={<LinkIcon size={16} />}
+                      onClick={handleGenerateInvite}
+                      fullWidth
+                      sx={{ textTransform: 'none', fontWeight: 600 }}
+                    >
+                      Generate Invite Code
+                    </Button>
+                  </Box>
+
+                  <Divider />
+
+                  <Box>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>Share by Email (Coming Soon)</Typography>
+                    <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1.5 }}>
+                      Or invite specific people by email address.
+                    </Typography>
+                    <Stack spacing={1}>
+                      <TextField
+                        size="small"
+                        placeholder="user@example.com"
+                        value={shareEmail}
+                        onChange={(e) => {
+                          setShareEmail(e.target.value);
+                          setShareEmailError('');
+                        }}
+                        error={!!shareEmailError}
+                        helperText={shareEmailError}
+                        fullWidth
+                        disabled
+                      />
+                      <Button
+                        variant="outlined"
+                        startIcon={<Users size={16} />}
+                        disabled
+                        fullWidth
+                        sx={{ textTransform: 'none' }}
+                      >
+                        Send Invite
+                      </Button>
+                    </Stack>
+                  </Box>
+                </Stack>
+              </Box>
+            )}
           </>
         ) : (
           <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flex: 1 }}>
@@ -364,34 +506,83 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
         </DialogActions>
       </Dialog>
 
-      {/* Share/Invite Dialog */}
-      <Dialog open={shareDialogOpen} onClose={() => setShareDialogOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Share Project</DialogTitle>
+      {/* Generate Invite Code Dialog */}
+      <Dialog open={inviteDialogOpen} onClose={() => setInviteDialogOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <LinkIcon size={20} />
+          Share Project - Invite Code
+        </DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ pt: 2 }}>
-            <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-              Share this invite code with others to let them access this project:
-            </Typography>
-            <Paper sx={{ p: 2, bgcolor: 'action.hover', display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Typography variant="body2" sx={{ fontFamily: 'monospace', flex: 1, wordBreak: 'break-all' }}>
-                {inviteCode}
+            <Alert severity="success">
+              <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                ✓ Invite code generated successfully
               </Typography>
-              <IconButton
-                size="small"
-                onClick={handleCopyInvite}
-                title={copiedCode ? 'Copied!' : 'Copy'}
+            </Alert>
+
+            <Box>
+              <Typography variant="body2" sx={{ fontWeight: 600, mb: 1 }}>
+                Share this code with others:
+              </Typography>
+              <Paper
+                sx={{
+                  p: 1.5,
+                  bgcolor: 'action.hover',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 1,
+                  borderRadius: 1,
+                }}
               >
-                {copiedCode ? <Check size={18} /> : <Copy size={18} />}
-              </IconButton>
-            </Paper>
+                <Typography
+                  variant="body2"
+                  sx={{
+                    fontFamily: 'monospace',
+                    flex: 1,
+                    wordBreak: 'break-all',
+                    fontWeight: 600,
+                    fontSize: '0.95rem',
+                  }}
+                >
+                  {inviteCode}
+                </Typography>
+                <IconButton
+                  size="small"
+                  onClick={handleCopyInvite}
+                  title={copiedCode ? 'Copied!' : 'Copy'}
+                  sx={{ flexShrink: 0 }}
+                >
+                  {copiedCode ? (
+                    <Check size={18} style={{ color: '#4CAF50' }} />
+                  ) : (
+                    <Copy size={18} />
+                  )}
+                </IconButton>
+              </Paper>
+            </Box>
+
+            <Box sx={{ bgcolor: 'info.lighter', p: 1.5, borderRadius: 1 }}>
+              <Typography variant="body2" sx={{ color: 'info.main', fontWeight: 500 }}>
+                💡 How to use this code:
+              </Typography>
+              <Typography variant="caption" sx={{ display: 'block', mt: 0.5, color: 'info.main' }}>
+                1. Share this code with the person you want to invite<br />
+                2. They paste it in the "Invited Projects" → "Join Project" section<br />
+                3. They'll gain access to view and sync this project
+              </Typography>
+            </Box>
+
+            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+              The code remains valid until you revoke it. Anyone with this code can join the project.
+            </Typography>
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setShareDialogOpen(false)}>Close</Button>
+          <Button onClick={() => setInviteDialogOpen(false)}>Done</Button>
         </DialogActions>
       </Dialog>
 
-      {/* Project Menu */}
+      {/* Project Context Menu */}
       <Menu
         anchorEl={menuAnchor}
         open={Boolean(menuAnchor)}
@@ -399,7 +590,7 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
       >
         <MenuItem onClick={handleDeleteProject}>
           <Trash2 size={16} style={{ marginRight: 8 }} />
-          Delete
+          Delete Project
         </MenuItem>
       </Menu>
     </Box>
