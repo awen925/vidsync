@@ -99,6 +99,7 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
   const fetchProjectFiles = async (projectId: string) => {
     setFilesLoading(true);
     try {
+      // Call the /files endpoint which scans the local_path
       const response = await cloudAPI.get(`/projects/${projectId}/files`);
       setFiles(response.data.files || []);
     } catch (error) {

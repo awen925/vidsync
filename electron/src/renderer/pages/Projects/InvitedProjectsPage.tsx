@@ -75,7 +75,8 @@ const InvitedProjectsPage: React.FC<InvitedProjectsPageProps> = ({ onSelectProje
   const fetchInvitedProjects = async () => {
     setLoading(true);
     try {
-      const response = await cloudAPI.get('/projects/invited');
+      // Use /list/invited endpoint to get projects where user is invited
+      const response = await cloudAPI.get('/projects/list/invited');
       const projectList = response.data.projects || [];
       setProjects(projectList);
       if (projectList.length > 0) {

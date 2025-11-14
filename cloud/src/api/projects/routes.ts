@@ -1,6 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { authMiddleware } from '../../middleware/authMiddleware';
 import { supabase } from '../../lib/supabaseClient';
+import * as fs from 'fs';
+import * as path from 'path';
 
 const router = Router();
 
@@ -85,6 +87,48 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
   } catch (error) {
     console.error('List projects exception:', error);
     res.status(500).json({ error: 'Failed to list projects' });
+  }
+});
+
+// GET /api/projects/list/invited - Get invited projects where user is a member (received)
+// IMPORTANT: This MUST come before /:projectId route to match correctly
+router.get('/list/invited', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user.id;
+
+    // Get accepted memberships
+    const { data: memberships, error: memErr } = await supabase
+      .from('project_members')
+      .select('project_id')
+      .eq('user_id', userId)
+      .eq('status', 'accepted');
+
+    if (memErr) {
+      console.error('Failed to fetch memberships:', memErr.message);
+      return res.status(500).json({ error: 'Failed to fetch invited projects' });
+    }
+
+    const projectIds = (memberships || []).map((m: any) => m.project_id).filter(Boolean);
+
+    if (projectIds.length === 0) {
+      return res.json({ projects: [] });
+    }
+
+    // Get project details with owner info
+    const { data: projects, error: projectsErr } = await supabase
+      .from('projects')
+      .select('*,owner:owner_id(id,email)')
+      .in('id', projectIds);
+
+    if (projectsErr) {
+      console.error('Failed to fetch invited projects:', projectsErr.message);
+      return res.status(500).json({ error: 'Failed to fetch invited projects' });
+    }
+
+    res.json({ projects: projects || [] });
+  } catch (error) {
+    console.error('Get invited projects exception:', error);
+    res.status(500).json({ error: 'Failed to fetch invited projects' });
   }
 });
 
@@ -285,6 +329,89 @@ router.get('/:projectId/sync-events', authMiddleware, async (req: Request, res: 
   } catch (error) {
     console.error('Sync events exception:', error);
     res.status(500).json({ error: 'Failed to fetch sync events' });
+  }
+});
+
+// GET /api/projects/:projectId/files - Get file tree from local path
+router.get('/:projectId/files', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { projectId } = req.params;
+    const userId = (req as any).user.id;
+    const { depth = 0, maxDepth = 3 } = req.query;
+    const currentDepth = parseInt(String(depth), 10) || 0;
+    const maxDepthLimit = Math.min(parseInt(String(maxDepth), 10) || 3, 5);
+
+    // Fetch project
+    const { data: project, error: projectErr } = await supabase
+      .from('projects')
+      .select('*')
+      .eq('id', projectId)
+      .single();
+
+    if (projectErr || !project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    // Check access: owner only (can't browse invited projects this way)
+    if (project.owner_id !== userId) {
+      return res.status(403).json({ error: 'Access denied - only project owner can browse files' });
+    }
+
+    if (!project.local_path) {
+      return res.json({ files: [], folder: null });
+    }
+
+    // Safely read directory
+    const scanDirectory = (dirPath: string, depth: number): any[] => {
+      if (depth > maxDepthLimit) return [];
+
+      try {
+        if (!fs.existsSync(dirPath)) {
+          return [];
+        }
+
+        const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+        return entries
+          .filter((entry) => !entry.name.startsWith('.')) // Skip hidden files
+          .map((entry) => {
+            try {
+              const fullPath = path.join(dirPath, entry.name);
+              const stats = fs.statSync(fullPath);
+
+              if (entry.isDirectory()) {
+                return {
+                  name: entry.name,
+                  type: 'folder',
+                  size: 0,
+                  modified: stats.mtime.toISOString(),
+                  children: depth < maxDepthLimit ? scanDirectory(fullPath, depth + 1) : [],
+                };
+              } else {
+                return {
+                  name: entry.name,
+                  type: 'file',
+                  size: stats.size,
+                  modified: stats.mtime.toISOString(),
+                };
+              }
+            } catch (err) {
+              console.warn(`Failed to stat ${entry.name}:`, err);
+              return null;
+            }
+          })
+          .filter(Boolean);
+      } catch (err) {
+        console.error(`Failed to read directory ${dirPath}:`, err);
+        return [];
+      }
+    };
+
+    const files = scanDirectory(project.local_path, currentDepth);
+
+    res.json({ files, folder: project.local_path });
+  } catch (error) {
+    console.error('Get files exception:', error);
+    res.status(500).json({ error: 'Failed to fetch files' });
   }
 });
 
