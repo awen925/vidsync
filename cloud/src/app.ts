@@ -28,8 +28,22 @@ const PORT = process.env.PORT || 3000;
 app.set('trust proxy', 1);
 
 // CORS configuration
+const corsOrigins = (process.env.CORS_ORIGINS || 'http://localhost:3001,http://localhost:3000').split(',').map(o => o.trim());
+
 const corsOptions = {
-  origin: (process.env.CORS_ORIGINS || 'http://localhost:3000').split(','),
+  origin: function(origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) {
+    // Allow requests with no origin (like mobile apps, Electron, curl requests)
+    if (!origin || origin === 'electron://localhost' || corsOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      // In development, allow more, in production be strict
+      if (process.env.NODE_ENV === 'development') {
+        callback(null, true);
+      } else {
+        callback(new Error('CORS not allowed'));
+      }
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],

@@ -1,237 +1,114 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { cloudAPI, setAccessToken } from '../../hooks/useCloudApi';
+import {
+  Box, Container, Paper, TextField, Button, Typography, Tab, Tabs,
+  Alert, CircularProgress, InputAdornment, IconButton, Stack,
+} from '@mui/material';
+import { Mail, Lock, Eye, EyeOff } from 'lucide-react';
+import { setAccessToken } from '../../hooks/useCloudApi';
 import { supabase } from '../../lib/supabaseClient';
-import logo from '../../assets/logo.svg';
 
-interface Toast {
-  id: string;
-  message: string;
-  type: 'success' | 'error' | 'info';
+interface TabPanelProps {
+  children?: React.ReactNode;
+  index: number;
+  value: number;
+}
+
+function TabPanel(props: TabPanelProps) {
+  const { children, value, index, ...other } = props;
+  return (
+    <div role="tabpanel" hidden={value !== index} id={`auth-${index}`} {...other}>
+      {value === index && <Box sx={{ p: 3 }}>{children}</Box>}
+    </div>
+  );
 }
 
 const AuthPage: React.FC = () => {
   const navigate = useNavigate();
+  const [tabValue, setTabValue] = React.useState(0);
   const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
+  const [showPassword, setShowPassword] = React.useState(false);
   const [isLoading, setIsLoading] = React.useState(false);
   const [error, setError] = React.useState('');
-  const [mode, setMode] = React.useState<'login' | 'signup' | 'magic'>('login');
-  const [toasts, setToasts] = React.useState<Toast[]>([]);
+  const [success, setSuccess] = React.useState('');
 
-  const addToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
-    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const toast: Toast = { id, message, type };
-    setToasts((prev) => [...prev, toast]);
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 4000);
-  };
-
-  const handleLogin = async (e?: React.FormEvent) => {
-    e?.preventDefault();
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
     setIsLoading(true);
     setError('');
     try {
-      // Use Supabase client in the renderer so it can manage refresh tokens
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) {
-        setError(error.message || 'Login failed');
-        setIsLoading(false);
-        return;
-      }
-
-      // supabase client will persist session and refresh tokens
-      const token = (data as any)?.session?.access_token;
-      if (token) {
-        setAccessToken(token);
-
-        // Persist refresh token securely in main process
-        try {
-          const refreshToken = (data as any).session?.refresh_token;
-          if (refreshToken && (window as any).api?.secureStore?.setRefreshToken) {
-            await (window as any).api.secureStore.setRefreshToken(refreshToken);
-          }
-        } catch (e) {
-          // Silently fail in production
-        }
-
-        // Register device with cloud after successful login
-        try {
-          const deviceInfo = await (window as any).api.deviceGetInfo();
-          await cloudAPI.post('/devices/register', {
-            deviceId: deviceInfo.deviceId,
-            deviceName: deviceInfo.deviceName,
-            platform: deviceInfo.platform,
-            deviceToken: deviceInfo.deviceToken || undefined,
-          });
-          addToast('Device registered successfully', 'success');
-        } catch (regErr) {
-          // Silently fail device registration
-          addToast('Logged in successfully', 'success');
-        }
-
-        navigate('/dashboard');
-      } else {
-        setError('Invalid login response');
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) throw new Error(error.message);
+      const { data: session } = await supabase.auth.getSession();
+      if (session?.session) {
+        setAccessToken(session.session.access_token);
+        setSuccess('Login successful! Redirecting...');
+        setTimeout(() => navigate('/dashboard'), 1000);
       }
     } catch (err: any) {
-      setError(err.message || err.response?.data?.error || 'Login failed');
+      setError(err.message || 'Login failed');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleSignup = async (e?: React.FormEvent) => {
-    e?.preventDefault();
+  const handleSignup = async (e: React.FormEvent) => {
+    e.preventDefault();
     setIsLoading(true);
     setError('');
     try {
-      // Use Supabase client signUp to create account and session
       const { data, error } = await supabase.auth.signUp({ email, password });
-      if (error) {
-        setError(error.message || 'Signup failed');
-        setIsLoading(false);
-        return;
-      }
-
-      // If signUp provided a session, use it; otherwise show message
-      const token = (data as any)?.session?.access_token;
-      if (token) {
-        setAccessToken(token);
-
-        // Persist refresh token securely in main process
-        try {
-          const refreshToken = (data as any).session?.refresh_token;
-          if (refreshToken && (window as any).api?.secureStore?.setRefreshToken) {
-            await (window as any).api.secureStore.setRefreshToken(refreshToken);
-          }
-        } catch (e) {
-          // Silently fail in production
-        }
-
-        try {
-          const deviceInfo = await (window as any).api.deviceGetInfo();
-          await cloudAPI.post('/devices/register', {
-            deviceId: deviceInfo.deviceId,
-            deviceName: deviceInfo.deviceName,
-            platform: deviceInfo.platform,
-            deviceToken: deviceInfo.deviceToken || undefined,
-          });
-          addToast('Device registered successfully', 'success');
-        } catch (regErr) {
-          // Silently fail device registration
-          addToast('Signed up successfully', 'success');
-        }
-
-        navigate('/dashboard');
-      } else {
-        setError('Signup succeeded. Please check your email to confirm.');
-      }
+      if (error) throw new Error(error.message);
+      setSuccess('Account created! Check email to confirm.');
     } catch (err: any) {
-      setError(err.message || err.response?.data?.error || 'Signup failed');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleMagicLink = async (e?: React.FormEvent) => {
-    e?.preventDefault();
-    setIsLoading(true);
-    setError('');
-    try {
-      await cloudAPI.post('/auth/magic-link', { email });
-      setError('Magic link sent. Check your email.');
-    } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to send magic link');
+      setError(err.message || 'Signup failed');
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-50 to-white">
-      {/* Toast container */}
-      <div className="fixed top-4 right-4 z-50 space-y-2">
-        {toasts.map((toast) => (
-          <div
-            key={toast.id}
-            className={`px-4 py-3 rounded-lg text-white shadow-lg ${
-              toast.type === 'success'
-                ? 'bg-green-500'
-                : toast.type === 'error'
-                ? 'bg-red-500'
-                : 'bg-blue-500'
-            }`}
-          >
-            {toast.message}
-          </div>
-        ))}
-      </div>
+    <Box sx={{ minHeight: '100vh', display: 'flex', alignItems: 'center', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', p: 2 }}>
+      <Container maxWidth="sm">
+        <Paper elevation={3} sx={{ borderRadius: 2, overflow: 'hidden' }}>
+          <Box sx={{ bgcolor: 'primary.main', color: 'white', p: 3, textAlign: 'center' }}>
+            <Typography variant="h4" sx={{ fontWeight: 700 }}>📹 Vidsync</Typography>
+            <Typography variant="body2">Fast & Secure File Sync</Typography>
+          </Box>
 
-      <div className="w-full max-w-md mx-auto p-6">
-        <div className="card flex flex-col items-center gap-4">
-          <img src={logo} alt="Vidsync" className="w-24 h-24" />
-          <h1 className="text-2xl font-bold">Vidsync</h1>
-          <p className="text-sm text-gray-500">Fast & secure file sync across devices</p>
+          <Tabs value={tabValue} onChange={(_, v) => setTabValue(v)} variant="fullWidth">
+            <Tab label="Login" />
+            <Tab label="Sign Up" />
+          </Tabs>
 
-          <div className="w-full mt-2">
-            <div className="flex gap-2 mb-4">
-              <button
-                className={`flex-1 py-2 rounded-md ${mode === 'login' ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-700'}`}
-                onClick={() => setMode('login')}
-              >
-                Login
-              </button>
-              <button
-                className={`flex-1 py-2 rounded-md ${mode === 'signup' ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-700'}`}
-                onClick={() => setMode('signup')}
-              >
-                Sign up
-              </button>
-              <button
-                className={`py-2 px-3 rounded-md ${mode === 'magic' ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-700'}`}
-                onClick={() => setMode('magic')}
-              >
-                Magic Link
-              </button>
-            </div>
+          <Box sx={{ p: 3 }}>
+            {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+            {success && <Alert severity="success" sx={{ mb: 2 }}>{success}</Alert>}
 
-            <form onSubmit={mode === 'signup' ? handleSignup : mode === 'magic' ? handleMagicLink : handleLogin} className="space-y-3">
-              <input
-                type="email"
-                placeholder="Email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                className="w-full border-gray-200 rounded-md p-3 focus:ring-2 focus:ring-indigo-200"
-              />
+            <TabPanel value={tabValue} index={0}>
+              <form onSubmit={handleLogin}>
+                <Stack spacing={2}>
+                  <TextField fullWidth label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={isLoading} InputProps={{ startAdornment: <InputAdornment position="start"><Mail size={20} /></InputAdornment> }} />
+                  <TextField fullWidth label="Password" type={showPassword ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)} disabled={isLoading} InputProps={{ startAdornment: <InputAdornment position="start"><Lock size={20} /></InputAdornment>, endAdornment: <InputAdornment position="end"><IconButton onClick={() => setShowPassword(!showPassword)}>{showPassword ? <EyeOff size={20} /> : <Eye size={20} />}</IconButton></InputAdornment> }} />
+                  <Button fullWidth variant="contained" size="large" type="submit" disabled={isLoading}>{isLoading ? <CircularProgress size={24} /> : 'Login'}</Button>
+                </Stack>
+              </form>
+            </TabPanel>
 
-              {mode !== 'magic' && (
-                <input
-                  type="password"
-                  placeholder="Password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  className="w-full border-gray-200 rounded-md p-3 focus:ring-2 focus:ring-indigo-200"
-                />
-              )}
-
-              {error && <div className="text-sm text-red-600 p-2 bg-red-50 rounded">{error}</div>}
-
-              <button type="submit" disabled={isLoading} className="w-full btn-primary">
-                {isLoading ? 'Please wait…' : mode === 'signup' ? 'Create account' : mode === 'magic' ? 'Send Magic Link' : 'Sign in'}
-              </button>
-            </form>
-
-            <div className="text-center text-xs text-gray-400 mt-4">
-              By continuing you agree to our <a className="text-indigo-600">Terms</a> and <a className="text-indigo-600">Privacy</a>.
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+            <TabPanel value={tabValue} index={1}>
+              <form onSubmit={handleSignup}>
+                <Stack spacing={2}>
+                  <TextField fullWidth label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={isLoading} InputProps={{ startAdornment: <InputAdornment position="start"><Mail size={20} /></InputAdornment> }} />
+                  <TextField fullWidth label="Password" type={showPassword ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)} disabled={isLoading} InputProps={{ startAdornment: <InputAdornment position="start"><Lock size={20} /></InputAdornment>, endAdornment: <InputAdornment position="end"><IconButton onClick={() => setShowPassword(!showPassword)}>{showPassword ? <EyeOff size={20} /> : <Eye size={20} />}</IconButton></InputAdornment> }} />
+                  <Button fullWidth variant="contained" size="large" type="submit" disabled={isLoading}>{isLoading ? <CircularProgress size={24} /> : 'Create'}</Button>
+                </Stack>
+              </form>
+            </TabPanel>
+          </Box>
+        </Paper>
+      </Container>
+    </Box>
   );
 };
 

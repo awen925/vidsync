@@ -5,7 +5,7 @@ import DashboardPage from './pages/Dashboard/DashboardPage';
 import ProjectsPage from './pages/Projects/ProjectsPage';
 import ProjectDetailPage from './pages/Projects/ProjectDetailPage';
 import SettingsPage from './pages/Settings/SettingsPage';
-import './styles/index.css';
+import MainLayout from './layouts/MainLayout';
 import { supabase } from './lib/supabaseClient';
 
 function App() {
@@ -91,7 +91,11 @@ function App() {
             path="/settings" 
             element={isAuthenticated ? <SettingsPage /> : <Navigate to="/auth" />} 
           />
-          <Route path="/" element={<Navigate to={isAuthenticated ? "/dashboard" : "/auth"} />} />
+          <Route 
+            path="/app" 
+            element={isAuthenticated ? <MainLayout /> : <Navigate to="/auth" />} 
+          />
+          <Route path="/" element={<Navigate to={isAuthenticated ? "/app" : "/auth"} />} />
         </Routes>
       </div>
     </Router>

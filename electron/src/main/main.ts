@@ -54,7 +54,11 @@ const createWindow = () => {
     icon: path.join(__dirname, '../renderer/assets/icon.png'),
   });
 
-  const startUrl = isDev ? 'http://localhost:3001' : `file://${path.join(__dirname, '../renderer/index.html')}`;
+  // In production, load the React build output from the build folder
+  // __dirname is dist/main, so we need to go up and into the build folder
+  const startUrl = isDev 
+    ? 'http://localhost:3001' 
+    : `file://${path.join(__dirname, '../../build/index.html')}`;
   mainWindow.loadURL(startUrl);
 
   if (isDev) {

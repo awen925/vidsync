@@ -1,16 +1,22 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-// styles are imported globally from App.tsx
+import {
+  Box, Container, Card, CardContent, TextField, Button, Typography,
+  FormControlLabel, Switch, Stack, Divider, Alert, CircularProgress,
+  Select, MenuItem, FormControl, InputLabel,
+} from '@mui/material';
+import { LogOut, Folder } from 'lucide-react';
 import { cloudAPI } from '../../hooks/useCloudApi';
 import { supabase } from '../../lib/supabaseClient';
 
 export const SettingsPage: React.FC = () => {
   const navigate = useNavigate();
-  const [downloadPath, setDownloadPath] = React.useState('~/Downloads');
-  const [autoSync, setAutoSync] = React.useState(true);
-  const [syncMode, setSyncMode] = React.useState<'automatic' | 'manual'>('automatic');
-  const [saving, setSaving] = React.useState(false);
-  const [loggingOut, setLoggingOut] = React.useState(false);
+  const [downloadPath, setDownloadPath] = useState('~/Downloads');
+  const [autoSync, setAutoSync] = useState(true);
+  const [syncMode, setSyncMode] = useState<'automatic' | 'manual'>('automatic');
+  const [saving, setSaving] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [success, setSuccess] = useState('');
 
   React.useEffect(() => {
     const fetchSettings = async () => {
@@ -37,15 +43,17 @@ export const SettingsPage: React.FC = () => {
 
   const handleSave = async () => {
     setSaving(true);
+    setSuccess('');
     try {
       await cloudAPI.put('/users/settings', {
         defaultDownloadPath: downloadPath,
         autoSync,
         syncMode,
       });
-      alert('Settings saved successfully');
+      setSuccess('Settings saved successfully!');
+      setTimeout(() => setSuccess(''), 3000);
     } catch (error) {
-      alert('Failed to save settings');
+      console.error('Failed to save settings:', error);
     } finally {
       setSaving(false);
     }
@@ -54,79 +62,108 @@ export const SettingsPage: React.FC = () => {
   const handleLogout = async () => {
     setLoggingOut(true);
     try {
-      // Clear Supabase session
       await supabase.auth.signOut();
-      
-      // Clear secure refresh token
       await (window as any).api.secureStore.clearRefreshToken();
-      
-      // Redirect to auth page
       navigate('/auth');
     } catch (error) {
       console.error('Failed to logout:', error);
-      alert('Logout failed');
       setLoggingOut(false);
     }
   };
 
   return (
-    <div className="settings-container">
-      <h1>Settings</h1>
+    <Box sx={{ py: 4, minHeight: '100vh', bgcolor: 'background.default' }}>
+      <Container maxWidth="md">
+        <Typography variant="h3" sx={{ fontWeight: 700, mb: 4 }}>Settings</Typography>
 
-      <div className="settings-section">
-        <h2>Sync Preferences</h2>
+        {success && <Alert severity="success" sx={{ mb: 3 }}>{success}</Alert>}
 
-        <div className="setting-item">
-          <label>Default Download Path</label>
-          <div className="path-input">
-            <input
-              type="text"
-              value={downloadPath}
-              onChange={(e) => setDownloadPath(e.target.value)}
-              readOnly
-            />
-            <button onClick={handleBrowseDirectory}>Browse</button>
-          </div>
-        </div>
+        {/* Sync Preferences Section */}
+        <Card sx={{ mb: 3 }}>
+          <CardContent>
+            <Typography variant="h6" sx={{ fontWeight: 600, mb: 3 }}>Sync Preferences</Typography>
+            
+            <Stack spacing={3}>
+              {/* Download Path */}
+              <Box>
+                <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 500 }}>Default Download Path</Typography>
+                <Stack direction="row" spacing={1}>
+                  <TextField
+                    fullWidth
+                    value={downloadPath}
+                    onChange={(e) => setDownloadPath(e.target.value)}
+                    InputProps={{
+                      readOnly: true,
+                      endAdornment: <Folder size={18} style={{ marginRight: 8 }} />,
+                    }}
+                  />
+                  <Button variant="outlined" onClick={handleBrowseDirectory} sx={{ minWidth: 100 }}>
+                    Browse
+                  </Button>
+                </Stack>
+              </Box>
 
-        <div className="setting-item">
-          <label>Auto Sync</label>
-          <input
-            type="checkbox"
-            checked={autoSync}
-            onChange={(e) => setAutoSync(e.target.checked)}
-          />
-        </div>
+              <Divider />
 
-        <div className="setting-item">
-          <label>Sync Mode</label>
-          <select value={syncMode} onChange={(e) => setSyncMode(e.target.value as any)}>
-            <option value="automatic">Automatic</option>
-            <option value="manual">Manual</option>
-          </select>
-        </div>
-      </div>
+              {/* Auto Sync */}
+              <Box>
+                <FormControlLabel
+                  control={<Switch checked={autoSync} onChange={(e) => setAutoSync(e.target.checked)} />}
+                  label={
+                    <Box>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 500 }}>Auto Sync</Typography>
+                      <Typography variant="caption" sx={{ color: 'text.secondary' }}>Automatically sync files when they change</Typography>
+                    </Box>
+                  }
+                />
+              </Box>
 
-      <button
-        onClick={handleSave}
-        disabled={saving}
-        className="btn-primary"
-      >
-        {saving ? 'Saving...' : 'Save Settings'}
-      </button>
+              <Divider />
 
-      <div style={{ marginTop: '2rem', paddingTop: '2rem', borderTop: '1px solid #ddd' }}>
-        <h2>Account</h2>
-        <button
-          onClick={handleLogout}
-          disabled={loggingOut}
-          className="btn-danger"
-          style={{ background: '#dc3545', color: 'white', padding: '0.5rem 1rem', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
-        >
-          {loggingOut ? 'Logging out...' : 'Logout'}
-        </button>
-      </div>
-    </div>
+              {/* Sync Mode */}
+              <FormControl fullWidth>
+                <InputLabel>Sync Mode</InputLabel>
+                <Select value={syncMode} onChange={(e) => setSyncMode(e.target.value as any)} label="Sync Mode">
+                  <MenuItem value="automatic">Automatic</MenuItem>
+                  <MenuItem value="manual">Manual</MenuItem>
+                </Select>
+              </FormControl>
+            </Stack>
+          </CardContent>
+        </Card>
+
+        {/* Save Button */}
+        <Box sx={{ mb: 4 }}>
+          <Button
+            variant="contained"
+            size="large"
+            onClick={handleSave}
+            disabled={saving}
+            sx={{ textTransform: 'none', fontWeight: 600 }}
+          >
+            {saving ? <><CircularProgress size={20} sx={{ mr: 1 }} />Saving...</> : 'Save Settings'}
+          </Button>
+        </Box>
+
+        <Divider sx={{ my: 4 }} />
+
+        {/* Account Section */}
+        <Box>
+          <Typography variant="h6" sx={{ fontWeight: 600, mb: 2 }}>Account</Typography>
+          <Button
+            variant="contained"
+            color="error"
+            size="large"
+            startIcon={<LogOut size={20} />}
+            onClick={handleLogout}
+            disabled={loggingOut}
+            sx={{ textTransform: 'none', fontWeight: 600 }}
+          >
+            {loggingOut ? 'Logging out...' : 'Logout'}
+          </Button>
+        </Box>
+      </Container>
+    </Box>
   );
 };
 
