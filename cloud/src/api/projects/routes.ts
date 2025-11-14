@@ -651,5 +651,220 @@ router.post('/:projectId/files-sync', authMiddleware, async (req: Request, res: 
   }
 });
 
+// POST /api/projects/:projectId/files/update - Owner posts file changes (deltas)
+// Phase 2B: Delta-first sync - only changed files sent (99% bandwidth savings)
+// Called by: electron app's file watcher service
+// Payload: [{path, op: 'create|update|delete', hash, mtime, size}]
+router.post('/:projectId/files/update', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { projectId } = req.params;
+    const { changes } = req.body;
+    const userId = (req as any).user.id;
+
+    // Check access: owner only
+    const { data: project, error: projectErr } = await supabase
+      .from('projects')
+      .select('*')
+      .eq('id', projectId)
+      .single();
+
+    if (projectErr || !project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    if (project.owner_id !== userId) {
+      return res.status(403).json({ error: 'Only project owner can update files' });
+    }
+
+    // Validate changes
+    if (!Array.isArray(changes) || changes.length === 0) {
+      return res.status(400).json({ error: 'No changes provided' });
+    }
+
+    // Limit changes per request (prevent abuse)
+    if (changes.length > 1000) {
+      return res.status(400).json({ error: 'Too many changes in single request (max 1000)' });
+    }
+
+    // Process each change
+    const results: any[] = [];
+    for (const change of changes) {
+      const { path: filePath, op, hash, mtime, size } = change;
+
+      if (!filePath || !op) {
+        continue;
+      }
+
+      try {
+        if (op === 'delete') {
+          // Soft delete: mark as deleted but keep record for history
+          const { error: updateErr } = await supabase
+            .from('remote_files')
+            .update({
+              deleted_by: userId,
+              deleted_at: new Date().toISOString(),
+            })
+            .eq('project_id', projectId)
+            .eq('path', filePath);
+
+          if (!updateErr) {
+            results.push({ path: filePath, op: 'delete', status: 'success' });
+          }
+        } else {
+          // Upsert file: create or update on (project_id, path)
+          const { error: upsertErr } = await supabase
+            .from('remote_files')
+            .upsert({
+              project_id: projectId,
+              path: filePath,
+              name: filePath.split('/').pop() || filePath,
+              size: size || 0,
+              is_directory: false,
+              mime_type: getMimeType(filePath),
+              file_hash: hash || '',
+              modified_at: new Date(mtime || Date.now()).toISOString(),
+              owner_id: userId,
+            })
+            .eq('project_id', projectId)
+            .eq('path', filePath);
+
+          if (!upsertErr) {
+            results.push({ path: filePath, op, status: 'success' });
+          }
+        }
+
+        // Append to project_events (immutable delta log)
+        const { data: lastEvent } = await supabase
+          .from('project_events')
+          .select('seq')
+          .eq('project_id', projectId)
+          .order('seq', { ascending: false })
+          .limit(1)
+          .single();
+
+        const seq = (lastEvent?.seq || 0) + 1;
+
+        await supabase.from('project_events').insert({
+          project_id: projectId,
+          seq,
+          change: { path: filePath, op, hash, mtime, size },
+          created_at: new Date().toISOString(),
+        });
+      } catch (error) {
+        console.error(`Error processing change for ${filePath}:`, error);
+        results.push({ path: filePath, op, status: 'error' });
+      }
+    }
+
+    res.json({
+      success: true,
+      changes_processed: results.length,
+      results,
+    });
+  } catch (error) {
+    console.error('Update files exception:', error);
+    res.status(500).json({ error: 'Failed to update files' });
+  }
+});
+
+// GET /api/projects/:projectId/events - Pull deltas since sequence number
+// Phase 2B: Incremental fetch - only new events sent (for polling fallback)
+// Called by: electron app to pull missed events or when reconnecting
+// Query params: since_seq (default 0), limit (default 100, max 500)
+router.get('/:projectId/events', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { projectId } = req.params;
+    const { since_seq = '0', limit = '100' } = req.query;
+    const userId = (req as any).user.id;
+
+    // Check access: owner or accepted member
+    const { data: project, error: projectErr } = await supabase
+      .from('projects')
+      .select('owner_id')
+      .eq('id', projectId)
+      .single();
+
+    if (projectErr || !project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    const isOwner = project.owner_id === userId;
+
+    if (!isOwner) {
+      const { data: membership, error: memErr } = await supabase
+        .from('project_members')
+        .select('*')
+        .eq('project_id', projectId)
+        .eq('user_id', userId)
+        .eq('status', 'accepted')
+        .single();
+
+      if (memErr || !membership) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+    }
+
+    // Fetch events since sequence
+    const sinceSeq = Math.max(0, parseInt(String(since_seq), 10) || 0);
+    const limitNum = Math.min(500, Math.max(1, parseInt(String(limit), 10) || 100));
+
+    const { data: events, error: eventsErr } = await supabase
+      .from('project_events')
+      .select('*')
+      .eq('project_id', projectId)
+      .gt('seq', sinceSeq)
+      .order('seq', { ascending: true })
+      .limit(limitNum);
+
+    if (eventsErr) {
+      console.error('Error fetching events:', eventsErr);
+      return res.status(500).json({ error: 'Failed to fetch events' });
+    }
+
+    const eventList = events || [];
+    const lastSeq = eventList.length > 0 ? eventList[eventList.length - 1].seq : sinceSeq;
+
+    res.json({
+      success: true,
+      events: eventList,
+      last_seq: lastSeq,
+      has_more: eventList.length === limitNum,
+    });
+  } catch (error) {
+    console.error('Get events exception:', error);
+    res.status(500).json({ error: 'Failed to fetch events' });
+  }
+});
+
+// Helper function to guess MIME type from filename
+function getMimeType(filePath: string): string {
+  const ext = filePath.split('.').pop()?.toLowerCase() || '';
+  const mimeMap: { [key: string]: string } = {
+    // Video
+    mp4: 'video/mp4',
+    mkv: 'video/x-matroska',
+    avi: 'video/x-msvideo',
+    mov: 'video/quicktime',
+    webm: 'video/webm',
+    
+    // Audio
+    mp3: 'audio/mpeg',
+    wav: 'audio/wav',
+    flac: 'audio/flac',
+    
+    // Images
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    png: 'image/png',
+    gif: 'image/gif',
+    
+    // Documents
+    pdf: 'application/pdf',
+    txt: 'text/plain',
+    json: 'application/json',
+  };
+  return mimeMap[ext] || 'application/octet-stream';
+}
+
 export default router;
 
