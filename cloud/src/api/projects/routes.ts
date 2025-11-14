@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { authMiddleware } from '../../middleware/authMiddleware';
 import { supabase } from '../../lib/supabaseClient';
+import { getWebSocketService } from '../../services/webSocketService';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -744,12 +745,23 @@ router.post('/:projectId/files/update', authMiddleware, async (req: Request, res
 
         const seq = (lastEvent?.seq || 0) + 1;
 
-        await supabase.from('project_events').insert({
+        const eventData = {
           project_id: projectId,
           seq,
           change: { path: filePath, op, hash, mtime, size },
           created_at: new Date().toISOString(),
-        });
+        };
+
+        await supabase.from('project_events').insert(eventData);
+
+        // Phase 2C: Broadcast to all WebSocket subscribers (real-time sync)
+        try {
+          const wsService = getWebSocketService();
+          wsService.broadcastProjectEvent(projectId, eventData);
+        } catch (error) {
+          // WebSocket is optional - log but don't fail if not available
+          console.debug('[Phase 2C] WebSocket broadcast skipped:', error);
+        }
       } catch (error) {
         console.error(`Error processing change for ${filePath}:`, error);
         results.push({ path: filePath, op, status: 'error' });
