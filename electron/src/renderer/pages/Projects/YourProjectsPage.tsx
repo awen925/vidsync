@@ -80,6 +80,7 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
   const [copiedCode, setCopiedCode] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [newProjectDesc, setNewProjectDesc] = useState('');
+  const [newProjectLocalPath, setNewProjectLocalPath] = useState('');
   const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
   const [selectedMenuProject, setSelectedMenuProject] = useState<Project | null>(null);
   const [tabValue, setTabValue] = useState(0);
@@ -202,13 +203,26 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
   const handleCreateProject = async () => {
     if (!newProjectName.trim()) return;
     try {
-      await cloudAPI.post('/projects', {
+      const response = await cloudAPI.post('/projects', {
         name: newProjectName,
         description: newProjectDesc,
+        local_path: newProjectLocalPath || null,
       });
+
+      // If project has a local_path, initialize Syncthing for it
+      if (response.data.project && newProjectLocalPath) {
+        try {
+          await (window as any).api.syncthingStartForProject(response.data.project.id, newProjectLocalPath);
+        } catch (syncError) {
+          console.error('Failed to start Syncthing for project:', syncError);
+          // Continue anyway - Syncthing setup failure shouldn't block project creation
+        }
+      }
+
       setCreateDialogOpen(false);
       setNewProjectName('');
       setNewProjectDesc('');
+      setNewProjectLocalPath('');
       await fetchProjects();
     } catch (error) {
       console.error('Failed to create project:', error);
@@ -241,6 +255,17 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
     navigator.clipboard.writeText(inviteCode);
     setCopiedCode(true);
     setTimeout(() => setCopiedCode(false), 2000);
+  };
+
+  const handleBrowseLocalPath = async () => {
+    try {
+      const path = await (window as any).api.openDirectory();
+      if (path) {
+        setNewProjectLocalPath(path);
+      }
+    } catch (error) {
+      console.error('Failed to select directory:', error);
+    }
   };
 
   const handleDeleteProject = async () => {
@@ -539,6 +564,24 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
               multiline
               rows={2}
             />
+            <Stack spacing={1}>
+              <TextField
+                fullWidth
+                label="Local Path (Optional)"
+                placeholder="Path to sync folder (e.g., /home/user/Videos)"
+                value={newProjectLocalPath}
+                onChange={(e) => setNewProjectLocalPath(e.target.value)}
+                helperText="If set, files will load instantly from your local folder"
+              />
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={handleBrowseLocalPath}
+                sx={{ alignSelf: 'flex-start' }}
+              >
+                Browse Folder
+              </Button>
+            </Stack>
           </Stack>
         </DialogContent>
         <DialogActions>

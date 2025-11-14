@@ -184,6 +184,57 @@ router.get('/:projectId', authMiddleware, async (req: Request, res: Response) =>
   }
 });
 
+// DELETE /api/projects/:projectId - Delete project (owner only)
+router.delete('/:projectId', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { projectId } = req.params;
+    const userId = (req as any).user.id;
+
+    // Verify project exists and user is owner
+    const { data: project, error: projectErr } = await supabase
+      .from('projects')
+      .select('*')
+      .eq('id', projectId)
+      .single();
+
+    if (projectErr || !project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    if (project.owner_id !== userId) {
+      return res.status(403).json({ error: 'Only project owner can delete' });
+    }
+
+    // Delete all members first (cascade)
+    await supabase
+      .from('project_members')
+      .delete()
+      .eq('project_id', projectId);
+
+    // Delete all devices associations
+    await supabase
+      .from('project_devices')
+      .delete()
+      .eq('project_id', projectId);
+
+    // Delete the project
+    const { error: deleteErr } = await supabase
+      .from('projects')
+      .delete()
+      .eq('id', projectId);
+
+    if (deleteErr) {
+      console.error('Failed to delete project:', deleteErr.message);
+      return res.status(500).json({ error: 'Failed to delete project' });
+    }
+
+    res.json({ success: true, message: 'Project deleted successfully' });
+  } catch (error) {
+    console.error('Delete project exception:', error);
+    res.status(500).json({ error: 'Failed to delete project' });
+  }
+});
+
 // POST /api/projects/:projectId/invite
 router.post('/:projectId/invite', authMiddleware, async (req: Request, res: Response) => {
   try {
