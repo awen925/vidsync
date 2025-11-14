@@ -13,11 +13,15 @@ import { SyncthingManager } from './syncthingManager';
 import { NebulaManager } from './nebulaManager';
 import { logger } from './logger';
 import { listDirectory, scanDirectoryTree, scanDirectoryFlat, getDirectoryStats, FileItem, DirectoryEntry } from './fileScanner';
+import { FileWatcher } from './services/fileWatcher';
 
 let mainWindow: BrowserWindow | null;
 const agentController = new AgentController();
 const syncthingManager = new SyncthingManager();
 const nebulaManager = new NebulaManager();
+
+// File watchers per project (projectId -> FileWatcher instance)
+const projectWatchers = new Map<string, FileWatcher>();
 
 // Forward agent logs to renderer when available
 const forwardLogToRenderer = (channel: string, msg: string) => {
@@ -102,6 +106,10 @@ app.on('ready', () => {
 });
 
 app.on('window-all-closed', () => {
+  // Stop all file watchers
+  projectWatchers.forEach((watcher) => watcher.stop());
+  projectWatchers.clear();
+  
   if (!isMac) {
     app.quit();
   }
@@ -249,6 +257,85 @@ const setupIPC = () => {
     } catch (e: any) {
       return { ok: false, error: e?.message || String(e) };
     }
+  });
+
+  // File Watcher: Start watching a project's local folder for changes
+  ipcMain.handle('fileWatcher:startWatching', async (_ev, { projectId, localPath, authToken }) => {
+    try {
+      // Check if already watching
+      if (projectWatchers.has(projectId)) {
+        logger.warn(`FileWatcher: Already watching project ${projectId}`);
+        return { success: true, message: 'Already watching' };
+      }
+
+      // Create new watcher
+      const watcher = new FileWatcher();
+      
+      // Set up change listener - calls cloud API when files change
+      watcher.watch(localPath, async (changes) => {
+        if (changes.length === 0) return;
+        
+        try {
+          logger.debug(`FileWatcher: Detected ${changes.length} changes in ${projectId}`);
+          
+          // Call cloud API to post file changes as deltas
+          const apiUrl = process.env.VIDSYNC_API_URL || 'http://localhost:3001';
+          const endpoint = `${apiUrl}/api/projects/${projectId}/files/update`;
+          
+          const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${authToken}`,
+            },
+            body: JSON.stringify({ changes }),
+          });
+
+          if (!response.ok) {
+            logger.error(`FileWatcher: Failed to post changes: ${response.status} ${response.statusText}`);
+            return;
+          }
+
+          const result = await response.json();
+          logger.debug(`FileWatcher: Successfully posted ${result.changes_processed} changes`);
+        } catch (error) {
+          logger.error('FileWatcher: Error posting file changes:', error);
+        }
+      });
+
+      projectWatchers.set(projectId, watcher);
+      logger.info(`FileWatcher: Started watching ${projectId} at ${localPath}`);
+      return { success: true, message: 'Started watching' };
+    } catch (error: any) {
+      logger.error(`FileWatcher: Failed to start watching: ${error.message}`);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // File Watcher: Stop watching a project folder
+  ipcMain.handle('fileWatcher:stopWatching', async (_ev, projectId: string) => {
+    try {
+      const watcher = projectWatchers.get(projectId);
+      if (!watcher) {
+        logger.debug(`FileWatcher: Project ${projectId} not being watched`);
+        return { success: true, message: 'Not watching' };
+      }
+
+      watcher.stop();
+      projectWatchers.delete(projectId);
+      logger.info(`FileWatcher: Stopped watching ${projectId}`);
+      return { success: true, message: 'Stopped watching' };
+    } catch (error: any) {
+      logger.error(`FileWatcher: Failed to stop watching: ${error.message}`);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // File Watcher: Get current watch status for a project
+  ipcMain.handle('fileWatcher:getStatus', async (_ev, projectId: string) => {
+    return {
+      isWatching: projectWatchers.has(projectId),
+    };
   });
 
   // Device info: create or return a local device identity stored in userData

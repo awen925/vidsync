@@ -18,6 +18,11 @@ contextBridge.exposeInMainWorld('api', {
   fsScanDirTree: (dirPath: string, options?: any) => ipcRenderer.invoke('fs:scanDirTree', dirPath, options),
   fsScanDirFlat: (dirPath: string) => ipcRenderer.invoke('fs:scanDirFlat', dirPath),
   fsGetDirStats: (dirPath: string) => ipcRenderer.invoke('fs:getDirStats', dirPath),
+  // File watcher for delta sync
+  fileWatcherStartWatching: (projectId: string, localPath: string, authToken: string) => 
+    ipcRenderer.invoke('fileWatcher:startWatching', { projectId, localPath, authToken }),
+  fileWatcherStopWatching: (projectId: string) => ipcRenderer.invoke('fileWatcher:stopWatching', projectId),
+  fileWatcherGetStatus: (projectId: string) => ipcRenderer.invoke('fileWatcher:getStatus', projectId),
   nebulaGenerateConfig: (projectId: string, opts?: any) => ipcRenderer.invoke('nebula:generateConfig', projectId, opts),
   nebulaOpenFolder: (projectId: string) => ipcRenderer.invoke('nebula:openFolder', projectId),
   nebulaGetPath: (projectId: string) => ipcRenderer.invoke('nebula:getPath', projectId),
