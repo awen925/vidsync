@@ -117,7 +117,7 @@ CREATE TABLE IF NOT EXISTS project_invites (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   invite_token TEXT NOT NULL UNIQUE,
-  created_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
   is_active BOOLEAN DEFAULT true,

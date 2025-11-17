@@ -364,7 +364,9 @@ router.post('/:projectId/invite-token', authMiddleware, async (req: Request, res
       .single();
 
     if (inviteErr) {
-      console.warn('Failed to store invite token (table may not exist):', inviteErr.message);
+      console.warn('Failed to store invite token:', inviteErr.message);
+      console.warn('Invite payload:', invitePayload);
+      console.warn('Proceeding with token generation despite storage failure');
       // Still return the token even if storage fails
       return res.json({ token });
     }
@@ -387,6 +389,7 @@ router.post('/join', authMiddleware, async (req: Request, res: Response) => {
     }
 
     // Find the invitation
+    console.log('invite_code: ', invite_code);
     const { data: invite, error: inviteErr } = await supabase
       .from('project_invites')
       .select('*')
