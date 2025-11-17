@@ -1,7 +1,37 @@
 import React, { useState } from 'react';
-import { Mail, Phone, MapPin, Calendar, Key } from 'lucide-react';
+import {
+  Box,
+  Container,
+  Paper,
+  Typography,
+  Button,
+  TextField,
+  Avatar,
+  Card,
+  CardContent,
+  Divider,
+  Alert,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  IconButton,
+} from '@mui/material';
+import {
+  Mail,
+  Phone,
+  LocationOn,
+  DateRange,
+  Lock,
+  Download,
+  Delete as DeleteIcon,
+  Edit as EditIcon,
+  Close as CloseIcon,
+} from '@mui/icons-material';
+import { useAppTheme } from '../../theme/AppThemeProvider';
 
 const ProfilePage: React.FC = () => {
+  const { isDark } = useAppTheme();
   const [profile, setProfile] = useState({
     name: 'John Doe',
     email: 'john@example.com',
@@ -9,205 +39,417 @@ const ProfilePage: React.FC = () => {
     location: 'San Francisco, CA',
     bio: 'Designer and developer passionate about creating beautiful products',
     joinedDate: 'January 15, 2024',
-    profileImage: 'J'
+    profileImage: 'J',
+    initials: 'JD',
   });
 
   const [editMode, setEditMode] = useState(false);
   const [formData, setFormData] = useState(profile);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
+    setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
   const handleSave = () => {
     setProfile(formData);
     setEditMode(false);
+    setSaveSuccess(true);
+    setTimeout(() => setSaveSuccess(false), 3000);
+  };
+
+  const handleCancel = () => {
+    setFormData(profile);
+    setEditMode(false);
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 ml-20">
-      {/* Header */}
-      <div className="bg-gradient-to-r from-blue-600 to-blue-800 text-white">
-        <div className="max-w-4xl mx-auto px-8 py-12">
-          <h1 className="text-4xl font-bold mb-2">My Profile</h1>
-          <p className="text-blue-100">Manage your account settings and preferences</p>
-        </div>
-      </div>
+    <Box sx={{ width: '100%', py: 4 }}>
+      <Container maxWidth="md">
+        {/* Success Alert */}
+        {saveSuccess && (
+          <Alert severity="success" sx={{ mb: 3 }}>
+            Profile updated successfully!
+          </Alert>
+        )}
 
-      {/* Main Content */}
-      <div className="max-w-4xl mx-auto px-8 py-8">
-        {/* Profile Card */}
-        <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden mb-6">
-          {/* Profile Header */}
-          <div className="bg-gradient-to-r from-blue-500 to-blue-600 h-32"></div>
+        {/* Profile Header Card */}
+        <Paper
+          elevation={0}
+          sx={{
+            mb: 4,
+            background: isDark
+              ? 'linear-gradient(135deg, #1976d2 0%, #1565c0 100%)'
+              : 'linear-gradient(135deg, #2196F3 0%, #1976D2 100%)',
+            color: 'white',
+            borderRadius: 2,
+            overflow: 'hidden',
+          }}
+        >
+          {/* Header Background */}
+          <Box sx={{ height: 140, position: 'relative' }}>
+            <Box
+              sx={{
+                position: 'absolute',
+                bottom: 0,
+                left: 0,
+                right: 0,
+                height: '100%',
+                opacity: 0.1,
+                backgroundImage: 'radial-gradient(circle, white 1px, transparent 1px)',
+                backgroundSize: '20px 20px',
+              }}
+            />
+          </Box>
 
           {/* Profile Info */}
-          <div className="px-8 pb-8 relative">
-            {/* Avatar */}
-            <div className="flex items-end gap-6 -mt-16 mb-6">
-              <div className="w-32 h-32 bg-gradient-to-br from-blue-400 to-blue-600 rounded-lg flex items-center justify-center text-5xl font-bold text-white border-4 border-white shadow-lg">
-                {profile.profileImage}
-              </div>
-              <div className="flex-1">
-                <h2 className="text-3xl font-bold text-gray-900">{profile.name}</h2>
-                <p className="text-gray-600 mt-1">Member since {profile.joinedDate}</p>
-              </div>
-              <button
-                onClick={() => setEditMode(!editMode)}
-                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+          <Box sx={{ px: 4, pb: 3, pt: 1 }}>
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 3,
+                flexWrap: { xs: 'wrap', sm: 'nowrap' },
+              }}
+            >
+              {/* Avatar */}
+              <Avatar
+                sx={{
+                  width: 120,
+                  height: 120,
+                  fontSize: '3rem',
+                  fontWeight: 'bold',
+                  bgcolor: 'rgba(255, 255, 255, 0.25)',
+                  border: '4px solid white',
+                  mt: -7,
+                }}
               >
-                {editMode ? 'Cancel' : 'Edit Profile'}
-              </button>
-            </div>
+                {profile.initials}
+              </Avatar>
 
-            {/* Content */}
-            {!editMode ? (
-              <>
-                {/* Bio */}
-                <p className="text-gray-700 mb-8">{profile.bio}</p>
+              {/* Profile Details */}
+              <Box sx={{ flex: 1, mt: 1 }}>
+                <Typography variant="h4" sx={{ fontWeight: 'bold', mb: 0.5 }}>
+                  {profile.name}
+                </Typography>
+                <Typography variant="body2" sx={{ opacity: 0.9, mb: 2 }}>
+                  Member since {profile.joinedDate}
+                </Typography>
+                <Typography
+                  variant="body2"
+                  sx={{
+                    opacity: 0.95,
+                    fontStyle: 'italic',
+                    maxWidth: 500,
+                  }}
+                >
+                  {profile.bio}
+                </Typography>
+              </Box>
 
-                {/* Contact Info Grid */}
-                <div className="grid grid-cols-2 gap-6 mb-8">
-                  <div className="flex items-start gap-4">
-                    <Mail className="text-blue-600 mt-1" size={20} />
-                    <div>
-                      <p className="text-sm font-medium text-gray-600">Email</p>
-                      <p className="text-gray-900 font-medium">{profile.email}</p>
-                    </div>
-                  </div>
+              {/* Edit Button */}
+              <Button
+                variant="contained"
+                sx={{
+                  bgcolor: 'rgba(255, 255, 255, 0.25)',
+                  color: 'white',
+                  '&:hover': {
+                    bgcolor: 'rgba(255, 255, 255, 0.35)',
+                  },
+                  mt: 1,
+                }}
+                startIcon={<EditIcon />}
+                onClick={() => setEditMode(!editMode)}
+              >
+                {editMode ? 'Cancel' : 'Edit'}
+              </Button>
+            </Box>
+          </Box>
+        </Paper>
 
-                  <div className="flex items-start gap-4">
-                    <Phone className="text-blue-600 mt-1" size={20} />
-                    <div>
-                      <p className="text-sm font-medium text-gray-600">Phone</p>
-                      <p className="text-gray-900 font-medium">{profile.phone}</p>
-                    </div>
-                  </div>
+        {/* Edit Form or View Mode */}
+        {editMode ? (
+          <Paper elevation={0} sx={{ p: 4, mb: 4, bgcolor: isDark ? '#2a2a2a' : 'background.paper', borderRadius: 1, border: 1, borderColor: 'divider' }}>
+            <Typography variant="h6" sx={{ mb: 3, fontWeight: 'bold' }}>
+              Edit Profile Information
+            </Typography>
 
-                  <div className="flex items-start gap-4">
-                    <MapPin className="text-blue-600 mt-1" size={20} />
-                    <div>
-                      <p className="text-sm font-medium text-gray-600">Location</p>
-                      <p className="text-gray-900 font-medium">{profile.location}</p>
-                    </div>
-                  </div>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              <TextField
+                fullWidth
+                label="Full Name"
+                name="name"
+                value={formData.name}
+                onChange={handleChange}
+                variant="outlined"
+              />
 
-                  <div className="flex items-start gap-4">
-                    <Calendar className="text-blue-600 mt-1" size={20} />
-                    <div>
-                      <p className="text-sm font-medium text-gray-600">Joined</p>
-                      <p className="text-gray-900 font-medium">{profile.joinedDate}</p>
-                    </div>
-                  </div>
-                </div>
-              </>
-            ) : (
-              <>
-                {/* Edit Form */}
-                <div className="space-y-6">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Full Name</label>
-                    <input
-                      type="text"
-                      name="name"
-                      value={formData.name}
-                      onChange={handleChange}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
+              <TextField
+                fullWidth
+                label="Bio"
+                name="bio"
+                value={formData.bio}
+                onChange={handleChange}
+                multiline
+                rows={3}
+                variant="outlined"
+              />
 
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Bio</label>
-                    <textarea
-                      name="bio"
-                      value={formData.bio}
-                      onChange={handleChange}
-                      rows={3}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
+              <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 3 }}>
+                <TextField
+                  label="Email"
+                  type="email"
+                  name="email"
+                  value={formData.email}
+                  onChange={handleChange}
+                  variant="outlined"
+                />
 
-                  <div className="grid grid-cols-2 gap-6">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
-                      <input
-                        type="email"
-                        name="email"
-                        value={formData.email}
-                        onChange={handleChange}
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    </div>
+                <TextField
+                  label="Phone"
+                  type="tel"
+                  name="phone"
+                  value={formData.phone}
+                  onChange={handleChange}
+                  variant="outlined"
+                />
+              </Box>
 
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Phone</label>
-                      <input
-                        type="tel"
-                        name="phone"
-                        value={formData.phone}
-                        onChange={handleChange}
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    </div>
-                  </div>
+              <TextField
+                fullWidth
+                label="Location"
+                name="location"
+                value={formData.location}
+                onChange={handleChange}
+                variant="outlined"
+              />
 
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Location</label>
-                    <input
-                      type="text"
-                      name="location"
-                      value={formData.location}
-                      onChange={handleChange}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
+              <Box sx={{ display: 'flex', gap: 2, justifyContent: 'flex-end', pt: 1 }}>
+                <Button
+                  variant="outlined"
+                  onClick={handleCancel}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  onClick={handleSave}
+                >
+                  Save Changes
+                </Button>
+              </Box>
+            </Box>
+          </Paper>
+        ) : (
+          <Paper elevation={0} sx={{ p: 4, mb: 4, bgcolor: isDark ? '#2a2a2a' : 'background.paper', borderRadius: 1, border: 1, borderColor: 'divider' }}>
+            <Typography variant="h6" sx={{ mb: 3, fontWeight: 'bold' }}>
+              Contact Information
+            </Typography>
 
-                  <button
-                    onClick={handleSave}
-                    className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors font-medium"
+            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 3 }}>
+              <Box sx={{ display: 'flex', gap: 2 }}>
+                <Mail sx={{ color: 'primary.main', mt: 0.5, flexShrink: 0 }} />
+                <Box>
+                  <Typography variant="caption" color="textSecondary">
+                    Email
+                  </Typography>
+                  <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                    {profile.email}
+                  </Typography>
+                </Box>
+              </Box>
+
+              <Box sx={{ display: 'flex', gap: 2 }}>
+                <Phone sx={{ color: 'primary.main', mt: 0.5, flexShrink: 0 }} />
+                <Box>
+                  <Typography variant="caption" color="textSecondary">
+                    Phone
+                  </Typography>
+                  <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                    {profile.phone}
+                  </Typography>
+                </Box>
+              </Box>
+
+              <Box sx={{ display: 'flex', gap: 2 }}>
+                <LocationOn sx={{ color: 'primary.main', mt: 0.5, flexShrink: 0 }} />
+                <Box>
+                  <Typography variant="caption" color="textSecondary">
+                    Location
+                  </Typography>
+                  <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                    {profile.location}
+                  </Typography>
+                </Box>
+              </Box>
+
+              <Box sx={{ display: 'flex', gap: 2 }}>
+                <DateRange sx={{ color: 'primary.main', mt: 0.5, flexShrink: 0 }} />
+                <Box>
+                  <Typography variant="caption" color="textSecondary">
+                    Joined
+                  </Typography>
+                  <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                    {profile.joinedDate}
+                  </Typography>
+                </Box>
+              </Box>
+            </Box>
+          </Paper>
+        )}
+
+        {/* Security & Account Sections */}
+        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 3 }}>
+          {/* Security Card */}
+          <Card elevation={0} sx={{ bgcolor: isDark ? '#2a2a2a' : 'background.paper', borderRadius: 1, height: '100%', border: 1, borderColor: 'divider' }}>
+              <CardContent>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+                  <Lock sx={{ color: 'primary.main' }} />
+                  <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
+                    Security
+                  </Typography>
+                </Box>
+
+                <Divider sx={{ mb: 2 }} />
+
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+                  <Box
+                    sx={{
+                      p: 2,
+                      bgcolor: isDark ? '#1a1a1a' : '#f5f5f5',
+                      borderRadius: 1,
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                      '&:hover': {
+                        bgcolor: isDark ? '#3a3a3a' : '#eeeeee',
+                      },
+                    }}
                   >
-                    Save Changes
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                      Change Password
+                    </Typography>
+                    <Typography variant="caption" color="textSecondary">
+                      Update your password regularly to keep your account secure
+                    </Typography>
+                  </Box>
 
-        {/* Additional Sections */}
-        <div className="grid grid-cols-2 gap-6">
-          {/* Security */}
-          <div className="bg-white rounded-lg border border-gray-200 p-6">
-            <div className="flex items-center gap-3 mb-4">
-              <Key className="text-blue-600" size={24} />
-              <h3 className="text-xl font-bold text-gray-900">Security</h3>
-            </div>
-            <button className="w-full text-left px-4 py-3 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors mb-3">
-              <p className="font-medium text-gray-900">Change Password</p>
-              <p className="text-sm text-gray-600 mt-1">Update your password regularly</p>
-            </button>
-            <button className="w-full text-left px-4 py-3 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors">
-              <p className="font-medium text-gray-900">Two-Factor Authentication</p>
-              <p className="text-sm text-gray-600 mt-1">Enable 2FA for extra security</p>
-            </button>
-          </div>
+                  <Box
+                    sx={{
+                      p: 2,
+                      bgcolor: isDark ? '#1a1a1a' : '#f5f5f5',
+                      borderRadius: 1,
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                      '&:hover': {
+                        bgcolor: isDark ? '#3a3a3a' : '#eeeeee',
+                      },
+                    }}
+                  >
+                    <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                      Two-Factor Authentication
+                    </Typography>
+                    <Typography variant="caption" color="textSecondary">
+                      Enable 2FA for extra security on your account
+                    </Typography>
+                  </Box>
+                </Box>
+              </CardContent>
+            </Card>
 
-          {/* Account */}
-          <div className="bg-white rounded-lg border border-gray-200 p-6">
-            <h3 className="text-xl font-bold text-gray-900 mb-4">Account</h3>
-            <button className="w-full text-left px-4 py-3 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors mb-3">
-              <p className="font-medium text-gray-900">Export Data</p>
-              <p className="text-sm text-gray-600 mt-1">Download your personal data</p>
-            </button>
-            <button className="w-full text-left px-4 py-3 bg-red-50 hover:bg-red-100 rounded-lg transition-colors">
-              <p className="font-medium text-red-900">Delete Account</p>
-              <p className="text-sm text-red-700 mt-1">Permanently delete your account</p>
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
+          {/* Account Card */}
+          <Card elevation={0} sx={{ bgcolor: isDark ? '#2a2a2a' : 'background.paper', borderRadius: 1, height: '100%', border: 1, borderColor: 'divider' }}>
+            <CardContent>
+              <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 2 }}>
+                Account
+              </Typography>
+
+              <Divider sx={{ mb: 2 }} />
+
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+                <Box
+                  sx={{
+                    p: 2,
+                    bgcolor: isDark ? '#1a1a1a' : '#f5f5f5',
+                    borderRadius: 1,
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                    '&:hover': {
+                      bgcolor: isDark ? '#3a3a3a' : '#eeeeee',
+                    },
+                  }}
+                >
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Download sx={{ fontSize: '1.2rem', color: 'primary.main' }} />
+                    <Box>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                        Export Data
+                      </Typography>
+                      <Typography variant="caption" color="textSecondary">
+                        Download your personal data in JSON format
+                      </Typography>
+                    </Box>
+                  </Box>
+                </Box>
+
+                <Box
+                  sx={{
+                    p: 2,
+                    bgcolor: isDark ? 'rgba(211, 47, 47, 0.1)' : '#ffebee',
+                    borderRadius: 1,
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                    '&:hover': {
+                      bgcolor: isDark ? 'rgba(211, 47, 47, 0.2)' : '#ffcdd2',
+                    },
+                  }}
+                  onClick={() => setShowDeleteConfirm(true)}
+                >
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <DeleteIcon sx={{ fontSize: '1.2rem', color: 'error.main' }} />
+                    <Box>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 600, color: 'error.main' }}>
+                        Delete Account
+                      </Typography>
+                      <Typography variant="caption" color="error">
+                        This action cannot be undone
+                      </Typography>
+                    </Box>
+                  </Box>
+                </Box>
+              </Box>
+            </CardContent>
+          </Card>
+        </Box>
+
+        {/* Delete Confirmation Dialog */}
+        <Dialog open={showDeleteConfirm} onClose={() => setShowDeleteConfirm(false)}>
+          <DialogTitle>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              Delete Account
+              <IconButton
+                size="small"
+                onClick={() => setShowDeleteConfirm(false)}
+              >
+                <CloseIcon />
+              </IconButton>
+            </Box>
+          </DialogTitle>
+          <DialogContent>
+            <Typography sx={{ mt: 2 }}>
+              Are you sure you want to delete your account? This action is permanent and cannot be undone. All your data will be permanently removed.
+            </Typography>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setShowDeleteConfirm(false)}>Cancel</Button>
+            <Button color="error" variant="contained">Delete Account</Button>
+          </DialogActions>
+        </Dialog>
+      </Container>
+    </Box>
   );
 };
 

@@ -19,6 +19,7 @@ import {
   Typography,
   Button,
   Paper,
+  Tooltip,
 } from '@mui/material';
 import {
   Settings,
@@ -39,6 +40,7 @@ type PageType = 'your-projects' | 'invited-projects' | 'profile' | 'settings' | 
 
 const SIDEBAR_WIDTH = 280;
 const LEFT_PANEL_WIDTH = 280;
+const ICON_SIDEBAR_WIDTH = 80;
 
 const MainLayout: React.FC = () => {
   const navigate = useNavigate();
@@ -48,6 +50,7 @@ const MainLayout: React.FC = () => {
   
   const [currentPage, setCurrentPage] = useState<PageType>('your-projects');
   const [sidebarOpen, setSidebarOpen] = useState(!isMobile);
+  const [hoveredNav, setHoveredNav] = useState<string | null>(null);
   const [userMenuAnchor, setUserMenuAnchor] = useState<null | HTMLElement>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
 
@@ -101,6 +104,11 @@ const MainLayout: React.FC = () => {
         sx={{
           width: '100%',
           zIndex: 1300,
+          bgcolor: 'background.paper',
+          color: 'text.primary',
+          boxShadow: 'none',
+          borderBottom: 1,
+          borderColor: 'divider',
         }}
       >
         <Toolbar sx={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -110,7 +118,7 @@ const MainLayout: React.FC = () => {
               color="inherit"
               edge="start"
               onClick={() => setSidebarOpen(!sidebarOpen)}
-              sx={{ display: { xs: 'flex', md: sidebarOpen ? 'none' : 'flex' } }}
+              sx={{ display: { xs: 'flex', md: 'none' } }}
             >
               <MenuIcon size={24} />
             </IconButton>
@@ -164,79 +172,82 @@ const MainLayout: React.FC = () => {
         </Toolbar>
       </AppBar>
 
-      {/* Left Sidebar - Navigation */}
+      {/* Compact Icon Sidebar */}
       <Paper
+        elevation={0}
         sx={{
-          width: sidebarOpen ? SIDEBAR_WIDTH : 0,
+          width: ICON_SIDEBAR_WIDTH,
           flexShrink: 0,
           marginTop: '64px',
           height: 'calc(100vh - 64px)',
-          overflow: 'hidden',
-          transition: 'width 0.3s ease',
+          overflow: 'auto',
           borderRight: 1,
           borderColor: 'divider',
           zIndex: 1200,
+          display: sidebarOpen ? 'flex' : { xs: 'none', md: 'flex' },
+          flexDirection: 'column',
+          alignItems: 'center',
+          py: 2,
+          gap: 1,
+          bgcolor: isDark ? '#1E1E1E' : 'background.paper',
         }}
       >
-        <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-          {/* Top Navigation */}
-          <Box sx={{ p: 2 }}>
-            <List sx={{ p: 0 }}>
-              {topNavItems.map((item) => (
-                <ListItem key={item.id} disablePadding sx={{ mb: 1 }}>
-                  <ListItemButton
-                    selected={currentPage === item.id}
-                    onClick={() => setCurrentPage(item.id as PageType)}
-                    sx={{
-                      borderRadius: 1,
-                      '&.Mui-selected': {
-                        bgcolor: 'action.selected',
-                        color: 'primary.main',
-                        fontWeight: 600,
-                      },
-                    }}
-                  >
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                      {item.icon}
-                      <span>{item.label}</span>
-                    </Box>
-                  </ListItemButton>
-                </ListItem>
-              ))}
-            </List>
-          </Box>
+        {/* Top Navigation Icons */}
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+          {topNavItems.map((item) => (
+            <Box
+              key={item.id}
+              onMouseEnter={() => setHoveredNav(item.id)}
+              onMouseLeave={() => setHoveredNav(null)}
+              sx={{ position: 'relative' }}
+            >
+              <Tooltip title={item.label} placement="right" arrow>
+                <IconButton
+                  onClick={() => setCurrentPage(item.id as PageType)}
+                  sx={{
+                    width: 56,
+                    height: 56,
+                    borderRadius: 2,
+                    bgcolor: currentPage === item.id ? 'primary.main' : 'transparent',
+                    color: currentPage === item.id ? 'white' : 'text.primary',
+                    transition: 'all 0.2s ease',
+                    '&:hover': {
+                      bgcolor: currentPage === item.id ? 'primary.dark' : 'action.hover',
+                    },
+                  }}
+                >
+                  {item.icon}
+                </IconButton>
+              </Tooltip>
+            </Box>
+          ))}
+        </Box>
 
-          <Divider />
+        {/* Spacer */}
+        <Box sx={{ flex: 1 }} />
 
-          {/* Flex spacer */}
-          <Box sx={{ flex: 1 }} />
-
-          {/* Bottom Navigation */}
-          <Box sx={{ p: 2, borderTop: 1, borderColor: 'divider' }}>
-            <List sx={{ p: 0 }}>
-              {bottomNavItems.map((item) => (
-                <ListItem key={item.id} disablePadding>
-                  <ListItemButton
-                    selected={currentPage === item.id}
-                    onClick={() => setCurrentPage(item.id as PageType)}
-                    sx={{
-                      borderRadius: 1,
-                      '&.Mui-selected': {
-                        bgcolor: 'action.selected',
-                        color: 'primary.main',
-                        fontWeight: 600,
-                      },
-                    }}
-                  >
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                      {item.icon}
-                      <span>{item.label}</span>
-                    </Box>
-                  </ListItemButton>
-                </ListItem>
-              ))}
-            </List>
-          </Box>
+        {/* Bottom Navigation Icons */}
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+          {bottomNavItems.map((item) => (
+            <Tooltip key={item.id} title={item.label} placement="right" arrow>
+              <IconButton
+                onClick={() => setCurrentPage(item.id as PageType)}
+                sx={{
+                  width: 56,
+                  height: 56,
+                  borderRadius: 2,
+                  bgcolor: currentPage === item.id ? 'primary.main' : 'transparent',
+                  color: currentPage === item.id ? 'white' : 'text.primary',
+                  transition: 'all 0.2s ease',
+                  '&:hover': {
+                    bgcolor: currentPage === item.id ? 'primary.dark' : 'action.hover',
+                  },
+                }}
+              >
+                {item.icon}
+              </IconButton>
+            </Tooltip>
+          ))}
         </Box>
       </Paper>
 

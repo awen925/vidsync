@@ -347,6 +347,7 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
     <Box sx={{ display: 'flex', height: '100%', bgcolor: 'background.default' }}>
       {/* Left Panel - Project List */}
       <Paper
+        elevation={0}
         sx={{
           width: 300,
           flexShrink: 0,
@@ -356,18 +357,27 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
+          bgcolor: 'primary.main',
         }}
       >
         {/* Header */}
-        <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
+        <Box sx={{ p: 2, borderBottom: 1, borderColor: 'rgba(255, 255, 255, 0.2)' }}>
           <Stack direction="row" spacing={1} sx={{ mb: 1 }}>
-            <Typography variant="h6" sx={{ fontWeight: 700, flex: 1 }}>Your Projects</Typography>
+            <Typography variant="h6" sx={{ fontWeight: 700, flex: 1, color: 'white' }}>Your Projects</Typography>
             <Button
               size="small"
               variant="contained"
               startIcon={<Plus size={16} />}
               onClick={() => setCreateDialogOpen(true)}
-              sx={{ textTransform: 'none', fontWeight: 600 }}
+              sx={{ 
+                textTransform: 'none', 
+                fontWeight: 600,
+                bgcolor: 'rgba(255, 255, 255, 0.2)',
+                color: 'white',
+                '&:hover': {
+                  bgcolor: 'rgba(255, 255, 255, 0.3)',
+                }
+              }}
             >
               New
             </Button>
@@ -403,18 +413,22 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
                   selected={selectedProject?.id === project.id}
                   onClick={() => setSelectedProject(project)}
                   sx={{
+                    color: 'white',
                     '&.Mui-selected': {
-                      bgcolor: 'action.selected',
+                      bgcolor: 'rgba(255, 255, 255, 0.2)',
                       '& .MuiListItemText-root': {
-                        color: 'primary.main',
+                        color: 'white',
                       },
+                    },
+                    '&:hover': {
+                      bgcolor: 'rgba(255, 255, 255, 0.1)',
                     },
                   }}
                 >
                   <ListItemText
-                    primary={<Typography sx={{ fontWeight: 500, fontSize: '0.95rem' }}>{project.name}</Typography>}
+                    primary={<Typography sx={{ fontWeight: 500, fontSize: '0.95rem', color: 'white' }}>{project.name}</Typography>}
                     secondary={
-                      <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                      <Typography variant="caption" sx={{ color: 'rgba(255, 255, 255, 0.7)' }}>
                         {project.description}
                       </Typography>
                     }
@@ -432,6 +446,7 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
           <>
             {/* Project Header */}
             <Paper
+              elevation={0}
               sx={{
                 p: 2,
                 borderRadius: 0,
@@ -543,60 +558,89 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
             ) : (
               // SHARED WITH TAB
               <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'auto', p: 2 }}>
-                <Alert severity="info" sx={{ mb: 2 }}>
-                  <Typography variant="body2">Share this project with others using an invite code.</Typography>
-                </Alert>
+                {/* Members Table Section */}
+                <Box sx={{ mb: 3 }}>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 2 }}>
+                    Project Members
+                  </Typography>
+                  <TableContainer component={Paper} elevation={0} sx={{ mb: 2, border: 1, borderColor: 'divider' }}>
+                    <Table>
+                      <TableHead>
+                        <TableRow sx={{ bgcolor: 'action.hover' }}>
+                          <TableCell>Name</TableCell>
+                          <TableCell>Email</TableCell>
+                          <TableCell>Role</TableCell>
+                          <TableCell align="right">Actions</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        <TableRow>
+                          <TableCell colSpan={4} sx={{ py: 3, textAlign: 'center', color: 'text.secondary' }}>
+                            No members have joined this project yet. Share an invite code to add collaborators.
+                          </TableCell>
+                        </TableRow>
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </Box>
 
-                <Stack spacing={2}>
-                  <Box>
-                    <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>Generate Invite Code</Typography>
-                    <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1.5 }}>
-                      Create a shareable link to invite others to this project.
-                    </Typography>
-                    <Button
-                      variant="contained"
-                      startIcon={<LinkIcon size={16} />}
-                      onClick={handleGenerateInvite}
-                      fullWidth
-                      sx={{ textTransform: 'none', fontWeight: 600 }}
-                    >
-                      Generate Invite Code
-                    </Button>
-                  </Box>
+                <Divider sx={{ my: 2 }} />
 
-                  <Divider />
+                {/* Sharing Options Section */}
+                <Box>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 2 }}>
+                    Share This Project
+                  </Typography>
 
-                  <Box>
-                    <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>Share by Email (Coming Soon)</Typography>
-                    <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1.5 }}>
-                      Or invite specific people by email address.
-                    </Typography>
-                    <Stack spacing={1}>
-                      <TextField
-                        size="small"
-                        placeholder="user@example.com"
-                        value={shareEmail}
-                        onChange={(e) => {
-                          setShareEmail(e.target.value);
-                          setShareEmailError('');
-                        }}
-                        error={!!shareEmailError}
-                        helperText={shareEmailError}
-                        fullWidth
-                        disabled
-                      />
+                  <Stack spacing={2}>
+                    <Box sx={{ p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>Generate Invite Code</Typography>
+                      <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>
+                        Create a shareable link to invite others to this project.
+                      </Typography>
                       <Button
-                        variant="outlined"
-                        startIcon={<Users size={16} />}
-                        disabled
+                        variant="contained"
+                        startIcon={<LinkIcon size={16} />}
+                        onClick={handleGenerateInvite}
                         fullWidth
-                        sx={{ textTransform: 'none' }}
+                        sx={{ textTransform: 'none', fontWeight: 600 }}
                       >
-                        Send Invite
+                        Generate Invite Code
                       </Button>
-                    </Stack>
-                  </Box>
-                </Stack>
+                    </Box>
+
+                    <Box sx={{ p: 2, bgcolor: 'action.hover', borderRadius: 1, opacity: 0.6 }}>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>Share by Email (Coming Soon)</Typography>
+                      <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>
+                        Invite specific people by email address.
+                      </Typography>
+                      <Stack spacing={1}>
+                        <TextField
+                          size="small"
+                          placeholder="user@example.com"
+                          value={shareEmail}
+                          onChange={(e) => {
+                            setShareEmail(e.target.value);
+                            setShareEmailError('');
+                          }}
+                          error={!!shareEmailError}
+                          helperText={shareEmailError}
+                          fullWidth
+                          disabled
+                        />
+                        <Button
+                          variant="outlined"
+                          startIcon={<Users size={16} />}
+                          disabled
+                          fullWidth
+                          sx={{ textTransform: 'none' }}
+                        >
+                          Send Invite
+                        </Button>
+                      </Stack>
+                    </Box>
+                  </Stack>
+                </Box>
               </Box>
             )}
           </>
@@ -758,6 +802,7 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
                 Share this code with others:
               </Typography>
               <Paper
+                elevation={0}
                 sx={{
                   p: 1.5,
                   bgcolor: 'action.hover',
@@ -765,6 +810,8 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
                   alignItems: 'center',
                   gap: 1,
                   borderRadius: 1,
+                  border: 1,
+                  borderColor: 'divider',
                 }}
               >
                 <Typography

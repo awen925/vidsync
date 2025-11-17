@@ -12,35 +12,35 @@ interface ThemeContextType {
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
-// Light theme
+// Light theme - Lagoon color scheme
 const lightTheme = createTheme({
   palette: {
     mode: 'light',
     primary: {
-      main: '#0A66C2', // Slack blue
-      light: '#4A90E2',
-      dark: '#003EA1',
+      main: '#0891B2', // Lagoon teal
+      light: '#06B6D4',
+      dark: '#0E7490',
       contrastText: '#ffffff',
     },
     secondary: {
-      main: '#E01E5A', // Slack red
-      light: '#F5A623',
-      dark: '#8B0000',
+      main: '#14B8A6', // Lagoon green
+      light: '#2DD4BF',
+      dark: '#0D9488',
       contrastText: '#ffffff',
     },
     background: {
-      default: '#FFFFFF',
-      paper: '#F8F9FA',
+      default: '#F0F9FB', // Very light lagoon background
+      paper: '#E0F2FE', // Light cyan paper
     },
     text: {
-      primary: '#2C3E50',
-      secondary: '#7F8FA4',
+      primary: '#164E63',
+      secondary: '#475569',
     },
     action: {
-      hover: 'rgba(10, 102, 194, 0.08)',
-      selected: 'rgba(10, 102, 194, 0.16)',
+      hover: 'rgba(8, 145, 178, 0.08)',
+      selected: 'rgba(8, 145, 178, 0.16)',
     },
-    divider: '#E1E8ED',
+    divider: '#CFFAFE',
     success: {
       main: '#2EBD6E',
     },
@@ -51,7 +51,7 @@ const lightTheme = createTheme({
       main: '#E01E5A',
     },
     info: {
-      main: '#0A66C2',
+      main: '#0891B2',
     },
   },
   typography: {

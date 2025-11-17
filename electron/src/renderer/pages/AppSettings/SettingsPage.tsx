@@ -1,5 +1,25 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Bell, Sliders, Save } from 'lucide-react';
+import {
+  Box,
+  Container,
+  Paper,
+  Tabs,
+  Tab,
+  TextField,
+  FormControlLabel,
+  Checkbox,
+  Radio,
+  RadioGroup,
+  Slider,
+  Typography,
+  Button,
+  Divider,
+  Select,
+  MenuItem,
+  Stack,
+  Alert,
+} from '@mui/material';
+import { Settings, Bell, Sliders, Check } from 'lucide-react';
 import { useAppTheme } from '../../theme/AppThemeProvider';
 
 type SettingsTab = 'general' | 'preferences' | 'notifications';
@@ -45,7 +65,6 @@ const SettingsPage: React.FC = () => {
     downloadThreads: 4,
   });
 
-  // Sync preferences with stored values
   useEffect(() => {
     setPreferences(prev => ({
       ...prev,
@@ -65,7 +84,6 @@ const SettingsPage: React.FC = () => {
     setPreferences(prev => ({ ...prev, [key]: value }));
     setSaved(false);
     
-    // If theme is being changed, update the app theme immediately
     if (key === 'theme') {
       setMode(value as 'light' | 'dark' | 'auto');
     }
@@ -76,339 +94,241 @@ const SettingsPage: React.FC = () => {
     setTimeout(() => setSaved(false), 2000);
   };
 
+  const SettingSection: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
+    <Box sx={{ mb: 3 }}>
+      <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
+        {title}
+      </Typography>
+      <Paper elevation={0} sx={{ p: 3, bgcolor: 'background.paper', borderRadius: 1, border: 1, borderColor: 'divider' }}>
+        {children}
+      </Paper>
+    </Box>
+  );
+
   return (
-    <div className="min-h-screen bg-gray-50 ml-20">
+    <Box sx={{ display: 'flex', height: '100%', bgcolor: 'background.default', flexDirection: 'column' }}>
       {/* Header */}
-      <div className="bg-gradient-to-r from-blue-600 to-blue-800 text-white">
-        <div className="max-w-6xl mx-auto px-8 py-12">
-          <div className="flex items-center gap-3">
-            <Settings size={32} />
-            <h1 className="text-4xl font-bold">Settings</h1>
-          </div>
-          <p className="text-blue-100 mt-2">Customize your experience</p>
-        </div>
-      </div>
+      <Paper
+        elevation={0}
+        sx={{
+          bgcolor: 'primary.main',
+          color: 'white',
+          p: 3,
+          mb: 3,
+          borderRadius: 0,
+        }}
+      >
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+          <Settings size={32} />
+          <Box>
+            <Typography variant="h5" sx={{ fontWeight: 700 }}>Settings</Typography>
+            <Typography variant="body2" sx={{ opacity: 0.8 }}>Customize your experience</Typography>
+          </Box>
+        </Box>
+      </Paper>
 
       {/* Main Content */}
-      <div className="max-w-6xl mx-auto px-8 py-8">
-        <div className="flex gap-8">
-          {/* Sidebar Tabs */}
-          <div className="w-48">
-            <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-              <button
-                onClick={() => setActiveTab('general')}
-                className={`w-full text-left px-4 py-3 border-l-4 transition-colors ${
-                  activeTab === 'general'
-                    ? 'bg-blue-50 border-blue-600 text-blue-600 font-medium'
-                    : 'border-transparent text-gray-700 hover:bg-gray-50'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <Settings size={18} />
-                  General
-                </div>
-              </button>
-              <button
-                onClick={() => setActiveTab('preferences')}
-                className={`w-full text-left px-4 py-3 border-l-4 transition-colors ${
-                  activeTab === 'preferences'
-                    ? 'bg-blue-50 border-blue-600 text-blue-600 font-medium'
-                    : 'border-transparent text-gray-700 hover:bg-gray-50'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <Sliders size={18} />
-                  Preferences
-                </div>
-              </button>
-              <button
-                onClick={() => setActiveTab('notifications')}
-                className={`w-full text-left px-4 py-3 border-l-4 transition-colors ${
-                  activeTab === 'notifications'
-                    ? 'bg-blue-50 border-blue-600 text-blue-600 font-medium'
-                    : 'border-transparent text-gray-700 hover:bg-gray-50'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <Bell size={18} />
-                  Notifications
-                </div>
-              </button>
-            </div>
-          </div>
+      <Box sx={{ flex: 1, overflow: 'auto', px: 3, pb: 3 }}>
+        <Container maxWidth="md">
+          {/* Tabs */}
+          <Paper elevation={0} sx={{ mb: 3, borderRadius: 1, border: 1, borderColor: 'divider' }}>
+            <Tabs
+              value={activeTab}
+              onChange={(_, val) => setActiveTab(val)}
+              variant="fullWidth"
+            >
+              <Tab label="General" value="general" icon={<Settings size={20} />} iconPosition="start" />
+              <Tab label="Preferences" value="preferences" icon={<Sliders size={20} />} iconPosition="start" />
+              <Tab label="Notifications" value="notifications" icon={<Bell size={20} />} iconPosition="start" />
+            </Tabs>
+          </Paper>
 
-          {/* Content Area */}
-          <div className="flex-1">
-            {/* General Settings */}
-            {activeTab === 'general' && (
-              <div className="bg-white rounded-lg border border-gray-200 p-8">
-                <h2 className="text-2xl font-bold text-gray-900 mb-6">General Settings</h2>
+          {/* General Settings */}
+          {activeTab === 'general' && (
+            <Box>
+              <SettingSection title="Language">
+                <Select
+                  fullWidth
+                  value={language}
+                  onChange={(e) => {
+                    setLanguage(e.target.value);
+                    setSaved(false);
+                  }}
+                >
+                  <MenuItem value="en">English</MenuItem>
+                  <MenuItem value="es">Spanish</MenuItem>
+                  <MenuItem value="fr">French</MenuItem>
+                  <MenuItem value="de">German</MenuItem>
+                  <MenuItem value="ja">Japanese</MenuItem>
+                </Select>
+              </SettingSection>
 
-                {/* Language */}
-                <div className="mb-8 pb-8 border-b border-gray-200">
-                  <label className="block text-sm font-medium text-gray-700 mb-3">Language</label>
-                  <select
-                    value={language}
-                    onChange={(e) => {
-                      setLanguage(e.target.value);
+              <SettingSection title="Default Sync Interval">
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                  <Slider
+                    min={5}
+                    max={120}
+                    step={5}
+                    value={defaultSyncInterval}
+                    onChange={(_, val) => {
+                      setDefaultSyncInterval(val as number);
                       setSaved(false);
                     }}
-                    className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="en">English</option>
-                    <option value="es">Spanish</option>
-                    <option value="fr">French</option>
-                    <option value="de">German</option>
-                    <option value="ja">Japanese</option>
-                  </select>
-                </div>
+                    sx={{ flex: 1 }}
+                  />
+                  <Typography variant="h6" sx={{ fontWeight: 700, minWidth: 80 }}>
+                    {defaultSyncInterval}m
+                  </Typography>
+                </Box>
+              </SettingSection>
 
-                {/* Default Sync Interval */}
-                <div className="mb-8 pb-8 border-b border-gray-200">
-                  <label className="block text-sm font-medium text-gray-700 mb-3">
-                    Default Sync Interval (minutes)
-                  </label>
-                  <div className="flex items-center gap-4">
-                    <input
-                      type="range"
-                      min="5"
-                      max="120"
-                      step="5"
-                      value={defaultSyncInterval}
-                      onChange={(e) => {
-                        setDefaultSyncInterval(parseInt(e.target.value));
-                        setSaved(false);
-                      }}
-                      className="flex-1"
-                    />
-                    <span className="text-2xl font-bold text-blue-600 w-16 text-right">
-                      {defaultSyncInterval}
-                    </span>
-                  </div>
-                </div>
+              <SettingSection title="Storage &amp; Cache">
+                <Stack spacing={2}>
+                  <Box sx={{ p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
+                    <Typography variant="caption" sx={{ opacity: 0.7 }}>Cache Size</Typography>
+                    <Typography variant="h6" sx={{ fontWeight: 700 }}>2.3 GB</Typography>
+                  </Box>
+                  <Button variant="outlined" fullWidth>
+                    Clear Cache
+                  </Button>
+                </Stack>
+              </SettingSection>
+            </Box>
+          )}
 
-                {/* Storage Info */}
-                <div>
-                  <h3 className="text-lg font-semibold text-gray-900 mb-4">Storage & Cache</h3>
-                  <div className="space-y-3">
-                    <div className="bg-gray-50 p-4 rounded-lg">
-                      <p className="text-sm text-gray-600">Cache Size</p>
-                      <p className="text-lg font-bold text-gray-900">2.3 GB</p>
-                    </div>
-                    <button className="w-full text-left px-4 py-3 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors">
-                      <p className="font-medium text-gray-900">Clear Cache</p>
-                      <p className="text-sm text-gray-600 mt-1">Free up space by clearing cached files</p>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
+          {/* Preference Settings */}
+          {activeTab === 'preferences' && (
+            <Box>
+              <SettingSection title="Theme">
+                <RadioGroup
+                  value={preferences.theme}
+                  onChange={(e) => handlePreferenceChange('theme', e.target.value)}
+                >
+                  <FormControlLabel value="light" control={<Radio />} label="Light" />
+                  <FormControlLabel value="dark" control={<Radio />} label="Dark" />
+                  <FormControlLabel value="auto" control={<Radio />} label="Auto (Follow System)" />
+                </RadioGroup>
+              </SettingSection>
 
-            {/* Preference Settings */}
-            {activeTab === 'preferences' && (
-              <div className="bg-white rounded-lg border border-gray-200 p-8">
-                <h2 className="text-2xl font-bold text-gray-900 mb-6">Preferences</h2>
-
-                {/* Theme */}
-                <div className="mb-8 pb-8 border-b border-gray-200">
-                  <label className="block text-sm font-medium text-gray-700 mb-3">Theme</label>
-                  <div className="flex gap-4">
-                    {['light', 'dark', 'auto'].map(theme => (
-                      <label key={theme} className="flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="radio"
-                          name="theme"
-                          value={theme}
-                          checked={preferences.theme === theme}
-                          onChange={() => handlePreferenceChange('theme', theme as any)}
-                          className="w-4 h-4"
-                        />
-                        <span className="capitalize text-gray-700">{theme}</span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Auto Sync */}
-                <div className="mb-8 pb-8 border-b border-gray-200">
-                  <label className="flex items-center gap-3 cursor-pointer">
-                    <input
-                      type="checkbox"
+              <SettingSection title="Auto-Sync Projects">
+                <FormControlLabel
+                  control={
+                    <Checkbox
                       checked={preferences.autoSync}
                       onChange={() => handlePreferenceChange('autoSync', !preferences.autoSync)}
-                      className="w-5 h-5 text-blue-600 rounded"
                     />
-                    <div>
-                      <p className="font-medium text-gray-900">Auto-Sync Projects</p>
-                      <p className="text-sm text-gray-600">Automatically sync projects at scheduled intervals</p>
-                    </div>
-                  </label>
-                </div>
+                  }
+                  label="Automatically sync projects at scheduled intervals"
+                />
+              </SettingSection>
 
-                {/* Conflict Resolution */}
-                <div className="mb-8 pb-8 border-b border-gray-200">
-                  <label className="block text-sm font-medium text-gray-700 mb-3">
-                    Conflict Resolution Strategy
-                  </label>
-                  <select
-                    value={preferences.conflictResolution}
-                    onChange={(e) => handlePreferenceChange('conflictResolution', e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="ask">Ask Me</option>
-                    <option value="keepLocal">Keep Local Version</option>
-                    <option value="keepRemote">Keep Remote Version</option>
-                  </select>
-                </div>
+              <SettingSection title="Conflict Resolution">
+                <Select
+                  fullWidth
+                  value={preferences.conflictResolution}
+                  onChange={(e) => handlePreferenceChange('conflictResolution', e.target.value)}
+                >
+                  <MenuItem value="ask">Ask Me</MenuItem>
+                  <MenuItem value="keepLocal">Keep Local Version</MenuItem>
+                  <MenuItem value="keepRemote">Keep Remote Version</MenuItem>
+                </Select>
+              </SettingSection>
 
-                {/* Bandwidth Settings */}
-                <div>
-                  <h3 className="text-lg font-semibold text-gray-900 mb-4">Bandwidth</h3>
+              <SettingSection title="Bandwidth Limit">
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                  <Slider
+                    min={0}
+                    max={100}
+                    step={5}
+                    value={preferences.bandwidthLimit}
+                    onChange={(_, val) => handlePreferenceChange('bandwidthLimit', val as number)}
+                    sx={{ flex: 1 }}
+                  />
+                  <Typography variant="h6" sx={{ fontWeight: 700, minWidth: 80 }}>
+                    {preferences.bandwidthLimit === 0 ? '∞' : `${preferences.bandwidthLimit}MB`}
+                  </Typography>
+                </Box>
+              </SettingSection>
 
-                  <div className="mb-6">
-                    <label className="block text-sm font-medium text-gray-700 mb-3">
-                      Bandwidth Limit (MB/s)
-                    </label>
-                    <div className="flex items-center gap-4">
-                      <input
-                        type="range"
-                        min="0"
-                        max="100"
-                        step="5"
-                        value={preferences.bandwidthLimit}
-                        onChange={(e) => handlePreferenceChange('bandwidthLimit', parseInt(e.target.value))}
-                        className="flex-1"
-                      />
-                      <span className="text-2xl font-bold text-blue-600 w-16 text-right">
-                        {preferences.bandwidthLimit === 0 ? '∞' : preferences.bandwidthLimit}
-                      </span>
-                    </div>
-                  </div>
+              <SettingSection title="Thread Settings">
+                <Stack spacing={3}>
+                  <Box>
+                    <Typography variant="body2" sx={{ mb: 1 }}>Upload Threads: {preferences.uploadThreads}</Typography>
+                    <Slider
+                      min={1}
+                      max={16}
+                      step={1}
+                      value={preferences.uploadThreads}
+                      onChange={(_, val) => handlePreferenceChange('uploadThreads', val as number)}
+                    />
+                  </Box>
+                  <Box>
+                    <Typography variant="body2" sx={{ mb: 1 }}>Download Threads: {preferences.downloadThreads}</Typography>
+                    <Slider
+                      min={1}
+                      max={16}
+                      step={1}
+                      value={preferences.downloadThreads}
+                      onChange={(_, val) => handlePreferenceChange('downloadThreads', val as number)}
+                    />
+                  </Box>
+                </Stack>
+              </SettingSection>
+            </Box>
+          )}
 
-                  {/* Thread Settings */}
-                  <div className="grid grid-cols-2 gap-6">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-3">
-                        Upload Threads
-                      </label>
-                      <div className="flex items-center gap-3">
-                        <input
-                          type="range"
-                          min="1"
-                          max="16"
-                          step="1"
-                          value={preferences.uploadThreads}
-                          onChange={(e) => handlePreferenceChange('uploadThreads', parseInt(e.target.value))}
-                          className="flex-1"
-                        />
-                        <span className="text-lg font-bold text-gray-900 w-8 text-center">
-                          {preferences.uploadThreads}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-3">
-                        Download Threads
-                      </label>
-                      <div className="flex items-center gap-3">
-                        <input
-                          type="range"
-                          min="1"
-                          max="16"
-                          step="1"
-                          value={preferences.downloadThreads}
-                          onChange={(e) => handlePreferenceChange('downloadThreads', parseInt(e.target.value))}
-                          className="flex-1"
-                        />
-                        <span className="text-lg font-bold text-gray-900 w-8 text-center">
-                          {preferences.downloadThreads}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Notification Settings */}
-            {activeTab === 'notifications' && (
-              <div className="bg-white rounded-lg border border-gray-200 p-8">
-                <h2 className="text-2xl font-bold text-gray-900 mb-6">Notification Settings</h2>
-
-                <div className="space-y-4">
+          {/* Notification Settings */}
+          {activeTab === 'notifications' && (
+            <Box>
+              <SettingSection title="Notification Preferences">
+                <Stack spacing={2}>
                   {[
-                    {
-                      key: 'projectUpdates' as const,
-                      label: 'Project Updates',
-                      description: 'Get notified when projects are updated'
-                    },
-                    {
-                      key: 'syncComplete' as const,
-                      label: 'Sync Complete',
-                      description: 'Notify when syncing finishes'
-                    },
-                    {
-                      key: 'teamInvites' as const,
-                      label: 'Team Invites',
-                      description: 'Receive notifications for team invitations'
-                    },
-                    {
-                      key: 'securityAlerts' as const,
-                      label: 'Security Alerts',
-                      description: 'Important alerts about account security'
-                    },
-                    {
-                      key: 'weeklyDigest' as const,
-                      label: 'Weekly Digest',
-                      description: 'Receive a weekly summary of activity'
-                    },
-                    {
-                      key: 'emailNotifications' as const,
-                      label: 'Email Notifications',
-                      description: 'Send notifications via email'
-                    },
-                  ].map(({ key, label, description }) => (
-                    <label
+                    { key: 'projectUpdates', label: 'Project Updates', desc: 'When projects are updated' },
+                    { key: 'syncComplete', label: 'Sync Complete', desc: 'When syncing finishes' },
+                    { key: 'teamInvites', label: 'Team Invites', desc: 'For team invitations' },
+                    { key: 'securityAlerts', label: 'Security Alerts', desc: 'Important security alerts' },
+                    { key: 'weeklyDigest', label: 'Weekly Digest', desc: 'Activity summary' },
+                    { key: 'emailNotifications', label: 'Email Notifications', desc: 'Via email' },
+                  ].map(({ key, label, desc }) => (
+                    <FormControlLabel
                       key={key}
-                      className="flex items-center gap-4 p-4 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={notifications[key]}
-                        onChange={() => handleNotificationChange(key)}
-                        className="w-5 h-5 text-blue-600 rounded"
-                      />
-                      <div className="flex-1">
-                        <p className="font-medium text-gray-900">{label}</p>
-                        <p className="text-sm text-gray-600">{description}</p>
-                      </div>
-                    </label>
+                      control={
+                        <Checkbox
+                          checked={notifications[key as keyof NotificationSettings]}
+                          onChange={() => handleNotificationChange(key as keyof NotificationSettings)}
+                        />
+                      }
+                      label={
+                        <Box>
+                          <Typography variant="body2" sx={{ fontWeight: 500 }}>{label}</Typography>
+                          <Typography variant="caption" sx={{ opacity: 0.7 }}>{desc}</Typography>
+                        </Box>
+                      }
+                    />
                   ))}
-                </div>
-              </div>
-            )}
+                </Stack>
+              </SettingSection>
+            </Box>
+          )}
 
-            {/* Save Button */}
-            <div className="mt-8 flex items-center gap-4">
-              <button
-                onClick={handleSave}
-                className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
-              >
-                <Save size={20} />
-                Save Changes
-              </button>
-              {saved && (
-                <div className="text-green-600 font-medium flex items-center gap-2">
-                  <div className="w-2 h-2 bg-green-600 rounded-full"></div>
-                  Saved successfully!
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+          {/* Save Button */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 4 }}>
+            <Button
+              variant="contained"
+              startIcon={<Check size={20} />}
+              onClick={handleSave}
+            >
+              Save Changes
+            </Button>
+            {saved && (
+              <Alert severity="success" sx={{ flex: 1, py: 1 }}>
+                Saved successfully!
+              </Alert>
+            )}
+          </Box>
+        </Container>
+      </Box>
+    </Box>
   );
 };
 
