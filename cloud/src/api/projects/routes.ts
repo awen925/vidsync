@@ -115,10 +115,10 @@ router.get('/list/invited', authMiddleware, async (req: Request, res: Response) 
       return res.json({ projects: [] });
     }
 
-    // Get project details with owner info
+    // Get project details with owner info using the view (avoids cross-schema join limitation)
     const { data: projects, error: projectsErr } = await supabase
-      .from('projects')
-      .select('*,owner:owner_id(id,email)')
+      .from('invited_projects_full')
+      .select('*')
       .in('id', projectIds);
 
     if (projectsErr) {
@@ -126,7 +126,28 @@ router.get('/list/invited', authMiddleware, async (req: Request, res: Response) 
       return res.status(500).json({ error: 'Failed to fetch invited projects' });
     }
 
-    res.json({ projects: projects || [] });
+    // Transform to match expected response format (owner field contains owner info)
+    const transformedProjects = (projects || []).map((p: any) => ({
+      id: p.id,
+      owner_id: p.owner_id,
+      name: p.name,
+      description: p.description,
+      local_path: p.local_path,
+      syncthing_folder_id: p.syncthing_folder_id,
+      auto_sync: p.auto_sync,
+      sync_mode: p.sync_mode,
+      status: p.status,
+      last_synced: p.last_synced,
+      created_at: p.created_at,
+      updated_at: p.updated_at,
+      owner: {
+        id: p.owner_id,
+        email: p.owner_email,
+        full_name: p.owner_name,
+      }
+    }));
+
+    res.json({ projects: transformedProjects });
   } catch (error) {
     console.error('Get invited projects exception:', error);
     res.status(500).json({ error: 'Failed to fetch invited projects' });

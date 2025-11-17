@@ -1,36 +1,17 @@
 -- Vidsync Cloud Database Schema for Supabase
 -- This schema defines all tables, indexes, and RLS policies for the Vidsync cloud backend
+-- NOTE: All user references use Supabase's built-in auth.users table
 
 -- Enable UUID and other extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- ============================================================================
--- USERS TABLE
--- ============================================================================
-CREATE TABLE IF NOT EXISTS users (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  email TEXT UNIQUE NOT NULL,
-  password_hash TEXT NOT NULL,
-  full_name TEXT,
-  avatar_url TEXT,
-  is_active BOOLEAN DEFAULT true,
-  email_verified BOOLEAN DEFAULT false,
-  email_verified_at TIMESTAMP WITH TIME ZONE,
-  last_login TIMESTAMP WITH TIME ZONE,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
-CREATE INDEX idx_users_email ON users(email);
-CREATE INDEX idx_users_created_at ON users(created_at);
-
--- ============================================================================
 -- DEVICES TABLE
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS devices (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   device_id TEXT NOT NULL,
   device_name TEXT NOT NULL,
   platform TEXT NOT NULL, -- 'linux', 'darwin', 'win32'
@@ -54,7 +35,7 @@ CREATE INDEX idx_devices_is_online ON devices(is_online);
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS projects (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  owner_id UUID NOT NULL,
+  owner_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   description TEXT,
   local_path TEXT,
@@ -117,13 +98,13 @@ CREATE TABLE IF NOT EXISTS project_invites (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   invite_token TEXT NOT NULL UNIQUE,
-  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
   is_active BOOLEAN DEFAULT true,
   used_count INTEGER DEFAULT 0,
   last_used_at TIMESTAMP WITH TIME ZONE,
-  last_used_by UUID REFERENCES users(id) ON DELETE SET NULL
+  last_used_by UUID REFERENCES auth.users(id) ON DELETE SET NULL
 );
 
 CREATE INDEX idx_project_invites_project_id ON project_invites(project_id);
@@ -168,7 +149,7 @@ CREATE TABLE IF NOT EXISTS conflicts (
   device_b_timestamp TIMESTAMP WITH TIME ZONE,
   resolution_strategy TEXT, -- 'device_a', 'device_b', 'keep_both', 'newer', 'manual'
   resolved_at TIMESTAMP WITH TIME ZONE,
-  resolved_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  resolved_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -182,7 +163,7 @@ CREATE INDEX idx_conflicts_resolved_at ON conflicts(resolved_at);
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS user_settings (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL UNIQUE REFERENCES auth.users(id) ON DELETE CASCADE,
   default_download_path TEXT,
   auto_sync BOOLEAN DEFAULT true,
   default_sync_mode TEXT DEFAULT 'automatic', -- 'automatic', 'manual'
@@ -217,7 +198,7 @@ CREATE INDEX idx_magic_link_tokens_expires_at ON magic_link_tokens(expires_at);
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS audit_logs (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
   action TEXT NOT NULL,
   resource_type TEXT,
   resource_id UUID,
