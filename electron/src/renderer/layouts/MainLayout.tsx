@@ -28,6 +28,7 @@ import {
   Folder,
   Mail,
 } from 'lucide-react';
+import { useAppTheme } from '../theme/AppThemeProvider';
 import YourProjectsPage from '../pages/Projects/YourProjectsPage';
 import InvitedProjectsPage from '../pages/Projects/InvitedProjectsPage';
 import ProfilePage from '../pages/Settings/ProfilePage';
@@ -42,6 +43,7 @@ const LEFT_PANEL_WIDTH = 280;
 const MainLayout: React.FC = () => {
   const navigate = useNavigate();
   const theme = useTheme();
+  const { isDark } = useAppTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   
   const [currentPage, setCurrentPage] = useState<PageType>('your-projects');
@@ -114,7 +116,7 @@ const MainLayout: React.FC = () => {
             </IconButton>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
               <img
-                src="/icons/logo1.png"
+                src={isDark ? '/icons/logo1.png' : '/icons/logo3.png'}
                 alt="Vidsync"
                 style={{ height: 32, width: 'auto' }}
               />

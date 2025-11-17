@@ -5,6 +5,7 @@ import {
   Alert, CircularProgress, InputAdornment, IconButton, Stack,
 } from '@mui/material';
 import { Mail, Lock, Eye, EyeOff } from 'lucide-react';
+import { useAppTheme } from '../../theme/AppThemeProvider';
 import { setAccessToken } from '../../hooks/useCloudApi';
 import { supabase } from '../../lib/supabaseClient';
 
@@ -25,6 +26,7 @@ function TabPanel(props: TabPanelProps) {
 
 const AuthPage: React.FC = () => {
   const navigate = useNavigate();
+  const { isDark } = useAppTheme();
   const [tabValue, setTabValue] = React.useState(0);
   const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
@@ -73,7 +75,14 @@ const AuthPage: React.FC = () => {
       <Container maxWidth="sm">
         <Paper elevation={3} sx={{ borderRadius: 2, overflow: 'hidden' }}>
           <Box sx={{ bgcolor: 'primary.main', color: 'white', p: 3, textAlign: 'center' }}>
-            <Typography variant="h4" sx={{ fontWeight: 700 }}>📹 Vidsync</Typography>
+            <Box sx={{ display: 'flex', justifyContent: 'center', mb: 2 }}>
+              <img
+                src="/icons/logo2.png"
+                alt="Vidsync"
+                style={{ height: 80, width: 'auto' }}
+              />
+            </Box>
+            <Typography variant="h4" sx={{ fontWeight: 700, mb: 1 }}>Vidsync</Typography>
             <Typography variant="body2">Fast & Secure File Sync</Typography>
           </Box>
 

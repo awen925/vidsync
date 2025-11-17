@@ -3,8 +3,9 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import AuthPage from './pages/Auth/AuthPage';
 import MainLayout from './layouts/MainLayout';
 import { supabase } from './lib/supabaseClient';
+import { AppThemeProvider } from './theme/AppThemeProvider';
 
-function App() {
+function AppContent() {
   const [isAuthenticated, setIsAuthenticated] = React.useState<boolean>(false);
 
   React.useEffect(() => {
@@ -76,6 +77,14 @@ function App() {
         </Routes>
       </div>
     </Router>
+  );
+}
+
+function App() {
+  return (
+    <AppThemeProvider>
+      <AppContent />
+    </AppThemeProvider>
   );
 }
 

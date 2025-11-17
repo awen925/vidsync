@@ -322,16 +322,6 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
 
   const handleSaveEditProject = async () => {
     if (!editingProject) return;
-    
-    // Check if path has changed significantly
-    const pathChanged = editProjectLocalPath !== editingProject.local_path;
-    if (pathChanged && editProjectLocalPath) {
-      // Show warning modal
-      setEditPathWarning(true);
-      return;
-    }
-    
-    // If no path change or warning already confirmed, proceed with save
     await performEditProjectSave();
   };
 
@@ -341,17 +331,8 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
       await cloudAPI.put(`/projects/${editingProject.id}`, {
         name: editProjectName,
         description: editProjectDesc,
-        local_path: editProjectLocalPath || null,
+        local_path: null,  // Local path is disabled in edit dialog
       });
-
-      // If local path was changed, update Syncthing
-      if (editProjectLocalPath && editProjectLocalPath !== editingProject.local_path) {
-        try {
-          await (window as any).api.syncthingStartForProject(editingProject.id, editProjectLocalPath);
-        } catch (syncError) {
-          console.warn('Failed to update Syncthing:', syncError);
-        }
-      }
 
       setEditDialogOpen(false);
       setEditingProject(null);
@@ -702,12 +683,14 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
                 value={editProjectLocalPath}
                 onChange={(e) => setEditProjectLocalPath(e.target.value)}
                 helperText="If set, files will load instantly from your local folder"
+                disabled
               />
               <Button
                 variant="outlined"
                 size="small"
                 onClick={handleEditProjectLocalPath}
                 sx={{ alignSelf: 'flex-start' }}
+                disabled
               >
                 Browse Folder
               </Button>

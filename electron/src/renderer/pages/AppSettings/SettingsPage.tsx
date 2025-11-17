@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Settings, Bell, Sliders, Save } from 'lucide-react';
+import { useAppTheme } from '../../theme/AppThemeProvider';
 
 type SettingsTab = 'general' | 'preferences' | 'notifications';
 
@@ -22,6 +23,7 @@ interface PreferenceSettings {
 }
 
 const SettingsPage: React.FC = () => {
+  const { mode, setMode } = useAppTheme();
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
   const [saved, setSaved] = useState(false);
 
@@ -35,13 +37,21 @@ const SettingsPage: React.FC = () => {
   });
 
   const [preferences, setPreferences] = useState<PreferenceSettings>({
-    theme: 'auto',
+    theme: mode as any,
     autoSync: true,
     conflictResolution: 'ask',
     bandwidthLimit: 10,
     uploadThreads: 4,
     downloadThreads: 4,
   });
+
+  // Sync preferences with stored values
+  useEffect(() => {
+    setPreferences(prev => ({
+      ...prev,
+      theme: mode as any,
+    }));
+  }, [mode]);
 
   const [language, setLanguage] = useState('en');
   const [defaultSyncInterval, setDefaultSyncInterval] = useState(30);
@@ -54,6 +64,11 @@ const SettingsPage: React.FC = () => {
   const handlePreferenceChange = (key: keyof PreferenceSettings, value: any) => {
     setPreferences(prev => ({ ...prev, [key]: value }));
     setSaved(false);
+    
+    // If theme is being changed, update the app theme immediately
+    if (key === 'theme') {
+      setMode(value as 'light' | 'dark' | 'auto');
+    }
   };
 
   const handleSave = () => {
