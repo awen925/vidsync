@@ -185,6 +185,54 @@ router.get('/:projectId', authMiddleware, async (req: Request, res: Response) =>
   }
 });
 
+// PUT /api/projects/:projectId - Update project (owner only)
+router.put('/:projectId', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { projectId } = req.params;
+    const { name, description, local_path } = req.body;
+    const userId = (req as any).user.id;
+
+    // Verify project exists and user is owner
+    const { data: project, error: projectErr } = await supabase
+      .from('projects')
+      .select('*')
+      .eq('id', projectId)
+      .single();
+
+    if (projectErr || !project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    if (project.owner_id !== userId) {
+      return res.status(403).json({ error: 'Only project owner can update' });
+    }
+
+    // Build update payload with only provided fields
+    const updatePayload: any = {};
+    if (name !== undefined) updatePayload.name = name;
+    if (description !== undefined) updatePayload.description = description;
+    if (local_path !== undefined) updatePayload.local_path = local_path;
+
+    // Update project
+    const { data: updatedProject, error: updateErr } = await supabase
+      .from('projects')
+      .update(updatePayload)
+      .eq('id', projectId)
+      .select()
+      .single();
+
+    if (updateErr) {
+      console.error('Failed to update project:', updateErr.message);
+      return res.status(500).json({ error: 'Failed to update project' });
+    }
+
+    res.json({ project: updatedProject });
+  } catch (error) {
+    console.error('Update project exception:', error);
+    res.status(500).json({ error: 'Failed to update project' });
+  }
+});
+
 // DELETE /api/projects/:projectId - Delete project (owner only)
 router.delete('/:projectId', authMiddleware, async (req: Request, res: Response) => {
   try {
