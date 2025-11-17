@@ -183,6 +183,7 @@ const MainLayout: React.FC = () => {
           overflow: 'auto',
           borderRight: 1,
           borderColor: 'divider',
+          borderRadius: 1,
           zIndex: 1200,
           display: sidebarOpen ? 'flex' : { xs: 'none', md: 'flex' },
           flexDirection: 'column',
@@ -203,6 +204,7 @@ const MainLayout: React.FC = () => {
             >
               <Tooltip title={item.label} placement="right" arrow>
                 <IconButton
+                  disableRipple
                   onClick={() => setCurrentPage(item.id as PageType)}
                   sx={{
                     width: 56,
@@ -231,6 +233,7 @@ const MainLayout: React.FC = () => {
           {bottomNavItems.map((item) => (
             <Tooltip key={item.id} title={item.label} placement="right" arrow>
               <IconButton
+                disableRipple
                 onClick={() => setCurrentPage(item.id as PageType)}
                 sx={{
                   width: 56,

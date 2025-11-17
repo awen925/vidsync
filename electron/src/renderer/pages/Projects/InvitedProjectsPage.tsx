@@ -164,10 +164,11 @@ const InvitedProjectsPage: React.FC<InvitedProjectsPageProps> = ({ onSelectProje
     <Box sx={{ display: 'flex', height: '100%', bgcolor: 'background.default' }}>
       {/* Left Panel - Invited Projects List */}
       <Paper
+        elevation={0}
         sx={{
           width: 300,
           flexShrink: 0,
-          borderRadius: 0,
+          borderRadius: 1,
           borderRight: 1,
           borderColor: 'divider',
           display: 'flex',
@@ -199,11 +200,12 @@ const InvitedProjectsPage: React.FC<InvitedProjectsPageProps> = ({ onSelectProje
                 disablePadding
               >
                 <ListItemButton
+                  disableRipple
                   selected={selectedProject?.id === project.id}
                   onClick={() => setSelectedProject(project)}
                   sx={{
                     '&.Mui-selected': {
-                      bgcolor: 'action.selected',
+                      bgcolor: 'rgba(128, 128, 128, 0.3)',
                       '& .MuiListItemText-root': {
                         color: 'primary.main',
                       },
@@ -234,9 +236,10 @@ const InvitedProjectsPage: React.FC<InvitedProjectsPageProps> = ({ onSelectProje
           <>
             {/* Project Header */}
             <Paper
+              elevation={0}
               sx={{
                 p: 2,
-                borderRadius: 0,
+                borderRadius: 1,
                 borderBottom: 1,
                 borderColor: 'divider',
                 bgcolor: 'background.paper',
@@ -259,6 +262,7 @@ const InvitedProjectsPage: React.FC<InvitedProjectsPageProps> = ({ onSelectProje
                     <>
                       {selectedProject.sync_status === 'syncing' ? (
                         <Button
+                          disableRipple
                           size="small"
                           variant="outlined"
                           startIcon={<Pause size={16} />}
@@ -268,6 +272,7 @@ const InvitedProjectsPage: React.FC<InvitedProjectsPageProps> = ({ onSelectProje
                         </Button>
                       ) : (
                         <Button
+                          disableRipple
                           size="small"
                           variant="outlined"
                           startIcon={<Play size={16} />}
@@ -279,6 +284,7 @@ const InvitedProjectsPage: React.FC<InvitedProjectsPageProps> = ({ onSelectProje
                     </>
                   ) : null}
                   <Button
+                    disableRipple
                     size="small"
                     variant="outlined"
                     color="error"
@@ -408,8 +414,8 @@ const InvitedProjectsPage: React.FC<InvitedProjectsPageProps> = ({ onSelectProje
           <Typography>Pausing will stop receiving files. You can resume later.</Typography>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setPauseConfirmOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleConfirmPause}>Pause</Button>
+          <Button disableRipple onClick={() => setPauseConfirmOpen(false)}>Cancel</Button>
+          <Button disableRipple variant="contained" onClick={handleConfirmPause}>Pause</Button>
         </DialogActions>
       </Dialog>
 
@@ -420,8 +426,8 @@ const InvitedProjectsPage: React.FC<InvitedProjectsPageProps> = ({ onSelectProje
           <Typography>This will remove the project and stop receiving files. This action cannot be undone.</Typography>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setDeleteConfirmOpen(false)}>Cancel</Button>
-          <Button variant="contained" color="error" onClick={handleConfirmDelete}>Remove</Button>
+          <Button disableRipple onClick={() => setDeleteConfirmOpen(false)}>Cancel</Button>
+          <Button disableRipple variant="contained" color="error" onClick={handleConfirmDelete}>Remove</Button>
         </DialogActions>
       </Dialog>
     </Box>

@@ -351,7 +351,7 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
         sx={{
           width: 300,
           flexShrink: 0,
-          borderRadius: 0,
+          borderRadius: 1,
           borderRight: 1,
           borderColor: 'divider',
           display: 'flex',
@@ -365,6 +365,7 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
           <Stack direction="row" spacing={1} sx={{ mb: 1 }}>
             <Typography variant="h6" sx={{ fontWeight: 700, flex: 1, color: 'white' }}>Your Projects</Typography>
             <Button
+              disableRipple
               size="small"
               variant="contained"
               startIcon={<Plus size={16} />}
@@ -401,6 +402,7 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
                 disablePadding
                 secondaryAction={
                   <IconButton
+                    disableRipple
                     edge="end"
                     size="small"
                     onClick={(e) => handleMenuOpen(e, project)}
@@ -410,12 +412,13 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
                 }
               >
                 <ListItemButton
+                  disableRipple
                   selected={selectedProject?.id === project.id}
                   onClick={() => setSelectedProject(project)}
                   sx={{
                     color: 'white',
                     '&.Mui-selected': {
-                      bgcolor: 'rgba(255, 255, 255, 0.2)',
+                      bgcolor: 'rgba(128, 128, 128, 0.3)',
                       '& .MuiListItemText-root': {
                         color: 'white',
                       },
@@ -449,7 +452,7 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
               elevation={0}
               sx={{
                 p: 2,
-                borderRadius: 0,
+                borderRadius: 1,
                 borderBottom: 1,
                 borderColor: 'divider',
                 bgcolor: 'background.paper',
@@ -463,6 +466,7 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
                   )}
                 </Box>
                 <IconButton
+                  disableRipple
                   size="small"
                   onClick={(e) => handleMenuOpen(e, selectedProject)}
                 >
@@ -491,6 +495,7 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
                     {pathBreadcrumbs.length > 1 && (
                       <Box sx={{ p: 1.5, borderBottom: 1, borderColor: 'divider', display: 'flex', alignItems: 'center', gap: 1 }}>
                         <Button
+                          disableRipple
                           size="small"
                           startIcon={<ArrowLeft size={16} />}
                           onClick={handleGoBack}
@@ -599,6 +604,7 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
                         Create a shareable link to invite others to this project.
                       </Typography>
                       <Button
+                        disableRipple
                         variant="contained"
                         startIcon={<LinkIcon size={16} />}
                         onClick={handleGenerateInvite}
@@ -629,6 +635,7 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
                           disabled
                         />
                         <Button
+                          disableRipple
                           variant="outlined"
                           startIcon={<Users size={16} />}
                           disabled
@@ -682,6 +689,7 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
                 helperText="If set, files will load instantly from your local folder"
               />
               <Button
+                disableRipple
                 variant="outlined"
                 size="small"
                 onClick={handleBrowseLocalPath}
@@ -693,8 +701,8 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setCreateDialogOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleCreateProject}>Create</Button>
+          <Button disableRipple onClick={() => setCreateDialogOpen(false)}>Cancel</Button>
+          <Button disableRipple variant="contained" onClick={handleCreateProject}>Create</Button>
         </DialogActions>
       </Dialog>
 
@@ -742,8 +750,8 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setEditDialogOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleSaveEditProject}>Save Changes</Button>
+          <Button disableRipple onClick={() => setEditDialogOpen(false)}>Cancel</Button>
+          <Button disableRipple variant="contained" onClick={handleSaveEditProject}>Save Changes</Button>
         </DialogActions>
       </Dialog>
 
@@ -772,8 +780,9 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setEditPathWarning(false)}>Cancel Edit</Button>
+          <Button disableRipple onClick={() => setEditPathWarning(false)}>Cancel Edit</Button>
           <Button 
+            disableRipple
             variant="contained" 
             color="warning"
             onClick={performEditProjectSave}
@@ -827,6 +836,7 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
                   {inviteCode}
                 </Typography>
                 <IconButton
+                  disableRipple
                   size="small"
                   onClick={handleCopyInvite}
                   title={copiedCode ? 'Copied!' : 'Copy'}
@@ -858,7 +868,7 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setInviteDialogOpen(false)}>Done</Button>
+          <Button disableRipple onClick={() => setInviteDialogOpen(false)}>Done</Button>
         </DialogActions>
       </Dialog>
 

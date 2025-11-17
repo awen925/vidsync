@@ -85,7 +85,7 @@ const ProfilePage: React.FC = () => {
               ? 'linear-gradient(135deg, #1976d2 0%, #1565c0 100%)'
               : 'linear-gradient(135deg, #2196F3 0%, #1976D2 100%)',
             color: 'white',
-            borderRadius: 2,
+            borderRadius: 1,
             overflow: 'hidden',
           }}
         >
@@ -152,6 +152,7 @@ const ProfilePage: React.FC = () => {
 
               {/* Edit Button */}
               <Button
+                disableRipple
                 variant="contained"
                 sx={{
                   bgcolor: 'rgba(255, 255, 255, 0.25)',
@@ -229,12 +230,14 @@ const ProfilePage: React.FC = () => {
 
               <Box sx={{ display: 'flex', gap: 2, justifyContent: 'flex-end', pt: 1 }}>
                 <Button
+                  disableRipple
                   variant="outlined"
                   onClick={handleCancel}
                 >
                   Cancel
                 </Button>
                 <Button
+                  disableRipple
                   variant="contained"
                   color="primary"
                   onClick={handleSave}
@@ -431,6 +434,7 @@ const ProfilePage: React.FC = () => {
             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               Delete Account
               <IconButton
+                disableRipple
                 size="small"
                 onClick={() => setShowDeleteConfirm(false)}
               >
@@ -444,8 +448,8 @@ const ProfilePage: React.FC = () => {
             </Typography>
           </DialogContent>
           <DialogActions>
-            <Button onClick={() => setShowDeleteConfirm(false)}>Cancel</Button>
-            <Button color="error" variant="contained">Delete Account</Button>
+            <Button disableRipple onClick={() => setShowDeleteConfirm(false)}>Cancel</Button>
+            <Button disableRipple color="error" variant="contained">Delete Account</Button>
           </DialogActions>
         </Dialog>
       </Container>

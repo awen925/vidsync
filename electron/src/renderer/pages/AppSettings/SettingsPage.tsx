@@ -115,7 +115,7 @@ const SettingsPage: React.FC = () => {
           color: 'white',
           p: 3,
           mb: 3,
-          borderRadius: 0,
+          borderRadius: 1,
         }}
       >
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
@@ -188,7 +188,7 @@ const SettingsPage: React.FC = () => {
                     <Typography variant="caption" sx={{ opacity: 0.7 }}>Cache Size</Typography>
                     <Typography variant="h6" sx={{ fontWeight: 700 }}>2.3 GB</Typography>
                   </Box>
-                  <Button variant="outlined" fullWidth>
+                  <Button disableRipple variant="outlined" fullWidth>
                     Clear Cache
                   </Button>
                 </Stack>
@@ -314,6 +314,7 @@ const SettingsPage: React.FC = () => {
           {/* Save Button */}
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 4 }}>
             <Button
+              disableRipple
               variant="contained"
               startIcon={<Check size={20} />}
               onClick={handleSave}

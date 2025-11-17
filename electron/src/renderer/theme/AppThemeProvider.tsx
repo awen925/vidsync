@@ -67,20 +67,20 @@ const lightTheme = createTheme({
   },
 });
 
-// Dark theme
+// Dark theme - Dark gray and black colors only
 const darkTheme = createTheme({
   palette: {
     mode: 'dark',
     primary: {
-      main: '#4A90E2', // Lighter blue for dark mode
-      light: '#6BA3F0',
-      dark: '#0A66C2',
+      main: '#1A1A1A', // Dark black
+      light: '#2D2D2D',
+      dark: '#0F0F0F',
       contrastText: '#ffffff',
     },
     secondary: {
-      main: '#F5A623', // Lighter red for dark mode
-      light: '#F5B649',
-      dark: '#E01E5A',
+      main: '#333333', // Dark gray
+      light: '#4D4D4D',
+      dark: '#1F1F1F',
       contrastText: '#ffffff',
     },
     background: {
@@ -92,10 +92,10 @@ const darkTheme = createTheme({
       secondary: '#B0B0B0',
     },
     action: {
-      hover: 'rgba(74, 144, 226, 0.12)',
-      selected: 'rgba(74, 144, 226, 0.24)',
+      hover: 'rgba(128, 128, 128, 0.12)',
+      selected: 'rgba(128, 128, 128, 0.3)',
     },
-    divider: '#333333',
+    divider: '#FFFFFF', // White borders in dark mode
     success: {
       main: '#4ECB71',
     },
@@ -106,7 +106,7 @@ const darkTheme = createTheme({
       main: '#F5A623',
     },
     info: {
-      main: '#4A90E2',
+      main: '#333333',
     },
   },
   typography: {
