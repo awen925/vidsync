@@ -16,6 +16,8 @@ import {
   DialogContent,
   DialogActions,
   CircularProgress,
+  TextField,
+  Alert,
 } from '@mui/material';
 import {
   Download,
@@ -26,6 +28,7 @@ import {
   Trash2,
   Folder,
   File,
+  Plus,
 } from 'lucide-react';
 import { cloudAPI } from '../../hooks/useCloudApi';
 
@@ -60,6 +63,11 @@ const InvitedProjectsPage: React.FC<InvitedProjectsPageProps> = ({ onSelectProje
   const [filesLoading, setFilesLoading] = useState(false);
   const [pauseConfirmOpen, setPauseConfirmOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [joinDialogOpen, setJoinDialogOpen] = useState(false);
+  const [inviteToken, setInviteToken] = useState('');
+  const [joinLoading, setJoinLoading] = useState(false);
+  const [joinError, setJoinError] = useState('');
+  const [joinSuccess, setJoinSuccess] = useState(false);
 
   useEffect(() => {
     fetchInvitedProjects();
@@ -100,6 +108,47 @@ const InvitedProjectsPage: React.FC<InvitedProjectsPageProps> = ({ onSelectProje
     } finally {
       setFilesLoading(false);
     }
+  };
+
+  const handleJoinProject = async () => {
+    if (!inviteToken.trim()) {
+      setJoinError('Please enter an invite token');
+      return;
+    }
+
+    setJoinLoading(true);
+    setJoinError('');
+    setJoinSuccess(false);
+
+    try {
+      // Call API to join project with invite token
+      await cloudAPI.post('/projects/join', {
+        invite_code: inviteToken.trim(),
+      });
+      
+      setJoinSuccess(true);
+      setInviteToken('');
+      
+      // Refresh projects list
+      setTimeout(() => {
+        fetchInvitedProjects();
+        setJoinDialogOpen(false);
+        setJoinSuccess(false);
+      }, 1500);
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.message || 'Failed to join project. Please check the token and try again.';
+      setJoinError(errorMessage);
+      console.error('Failed to join project:', error);
+    } finally {
+      setJoinLoading(false);
+    }
+  };
+
+  const handleCloseJoinDialog = () => {
+    setJoinDialogOpen(false);
+    setInviteToken('');
+    setJoinError('');
+    setJoinSuccess(false);
   };
 
   const handlePauseSync = () => {
@@ -178,8 +227,30 @@ const InvitedProjectsPage: React.FC<InvitedProjectsPageProps> = ({ onSelectProje
       >
         {/* Header */}
         <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
-          <Typography variant="h6" sx={{ fontWeight: 700 }}>Incoming Projects</Typography>
-          <Typography variant="caption" sx={{ color: 'text.secondary' }}>Files from others</Typography>
+          <Stack direction="row" spacing={1} sx={{ mb: 1 }}>
+            <Box sx={{ flex: 1 }}>
+              <Typography variant="h6" sx={{ fontWeight: 700 }}>Incoming Projects</Typography>
+              <Typography variant="caption" sx={{ color: 'text.secondary' }}>Files from others</Typography>
+            </Box>
+            <Button
+              disableRipple
+              size="small"
+              variant="contained"
+              startIcon={<Plus size={16} />}
+              onClick={() => setJoinDialogOpen(true)}
+              sx={{ 
+                textTransform: 'none', 
+                fontWeight: 600,
+                bgcolor: 'rgba(255, 255, 255, 0.2)',
+                color: 'text.primary',
+                '&:hover': {
+                  bgcolor: 'rgba(255, 255, 255, 0.3)',
+                }
+              }}
+            >
+              Join
+            </Button>
+          </Stack>
         </Box>
 
         {/* Projects List */}
@@ -428,6 +499,71 @@ const InvitedProjectsPage: React.FC<InvitedProjectsPageProps> = ({ onSelectProje
         <DialogActions>
           <Button disableRipple onClick={() => setDeleteConfirmOpen(false)}>Cancel</Button>
           <Button disableRipple variant="contained" color="error" onClick={handleConfirmDelete}>Remove</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Join Project Dialog */}
+      <Dialog open={joinDialogOpen} onClose={handleCloseJoinDialog} maxWidth="sm" fullWidth>
+        <DialogTitle>Join Project with Invite Code</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 2 }}>
+            {joinSuccess && (
+              <Alert severity="success">
+                <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                  ✓ Project joined successfully!
+                </Typography>
+              </Alert>
+            )}
+            
+            {joinError && (
+              <Alert severity="error">
+                <Typography variant="body2">
+                  {joinError}
+                </Typography>
+              </Alert>
+            )}
+            
+            <Box>
+              <Typography variant="body2" sx={{ fontWeight: 600, mb: 1 }}>
+                Enter the invite code shared with you:
+              </Typography>
+              <TextField
+                fullWidth
+                placeholder="Paste invite code here"
+                value={inviteToken}
+                onChange={(e) => {
+                  setInviteToken(e.target.value);
+                  setJoinError('');
+                }}
+                disabled={joinLoading || joinSuccess}
+                multiline
+                rows={3}
+                variant="outlined"
+              />
+            </Box>
+
+            <Typography variant="caption" sx={{ color: 'text.secondary', fontStyle: 'italic' }}>
+              💡 You can get an invite code from the person who shared a project with you. They can find it in the "Your Projects" page under the project details.
+            </Typography>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button 
+            disableRipple 
+            onClick={handleCloseJoinDialog}
+            disabled={joinLoading}
+          >
+            Cancel
+          </Button>
+          <Button
+            disableRipple
+            variant="contained"
+            onClick={handleJoinProject}
+            disabled={joinLoading || !inviteToken.trim()}
+          >
+            {joinLoading ? <CircularProgress size={20} sx={{ mr: 1 }} /> : null}
+            {joinLoading ? 'Joining...' : 'Join Project'}
+          </Button>
         </DialogActions>
       </Dialog>
     </Box>

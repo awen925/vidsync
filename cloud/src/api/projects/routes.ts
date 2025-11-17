@@ -376,6 +376,103 @@ router.post('/:projectId/invite-token', authMiddleware, async (req: Request, res
   }
 });
 
+// POST /api/projects/join - Join a project using an invite token
+router.post('/join', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { invite_code } = req.body;
+    const userId = (req as any).user.id;
+
+    if (!invite_code) {
+      return res.status(400).json({ error: 'Invite code is required' });
+    }
+
+    // Find the invitation
+    const { data: invite, error: inviteErr } = await supabase
+      .from('project_invites')
+      .select('*')
+      .eq('invite_token', invite_code)
+      .eq('is_active', true)
+      .single();
+
+    if (inviteErr || !invite) {
+      return res.status(404).json({ error: 'Invalid or expired invite code' });
+    }
+
+    // Check if invite is expired
+    if (new Date(invite.expires_at) < new Date()) {
+      return res.status(403).json({ error: 'Invite code has expired' });
+    }
+
+    const projectId = invite.project_id;
+
+    // Check if user is already a member
+    const { data: existingMember, error: existingErr } = await supabase
+      .from('project_members')
+      .select('*')
+      .eq('project_id', projectId)
+      .eq('user_id', userId)
+      .single();
+
+    if (existingMember) {
+      return res.status(400).json({ error: 'You are already a member of this project' });
+    }
+
+    // Add user as a member of the project
+    const { data: member, error: memberErr } = await supabase
+      .from('project_members')
+      .insert({
+        project_id: projectId,
+        user_id: userId,
+        role: 'viewer',
+        invited_by: invite.created_by,
+        invited_at: invite.created_at,
+        joined_at: new Date().toISOString(),
+        status: 'accepted',
+      })
+      .select()
+      .single();
+
+    if (memberErr) {
+      console.error('Failed to add project member:', memberErr.message);
+      return res.status(500).json({ error: 'Failed to join project' });
+    }
+
+    // Update invite usage tracking
+    const { error: updateErr } = await supabase
+      .from('project_invites')
+      .update({
+        used_count: (invite.used_count || 0) + 1,
+        last_used_at: new Date().toISOString(),
+        last_used_by: userId,
+      })
+      .eq('id', invite.id);
+
+    if (updateErr) {
+      console.warn('Failed to update invite usage:', updateErr.message);
+      // Don't fail the join operation if we can't track usage
+    }
+
+    // Get the full project details
+    const { data: project, error: projectErr } = await supabase
+      .from('projects')
+      .select('*')
+      .eq('id', projectId)
+      .single();
+
+    if (projectErr) {
+      return res.status(500).json({ error: 'Failed to fetch project details' });
+    }
+
+    res.status(200).json({ 
+      message: 'Successfully joined project',
+      project 
+    });
+  } catch (error) {
+    console.error('Join project exception:', error);
+    res.status(500).json({ error: 'Failed to join project' });
+  }
+});
+
 // POST /api/projects/:projectId/devices -> assign device to project
 router.post('/:projectId/devices', authMiddleware, async (req: Request, res: Response) => {
   try {

@@ -111,6 +111,27 @@ CREATE INDEX idx_project_devices_project_id ON project_devices(project_id);
 CREATE INDEX idx_project_devices_device_id ON project_devices(device_id);
 
 -- ============================================================================
+-- PROJECT INVITES TABLE (for shareable invite tokens)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS project_invites (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  invite_token TEXT NOT NULL UNIQUE,
+  created_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+  is_active BOOLEAN DEFAULT true,
+  used_count INTEGER DEFAULT 0,
+  last_used_at TIMESTAMP WITH TIME ZONE,
+  last_used_by UUID REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE INDEX idx_project_invites_project_id ON project_invites(project_id);
+CREATE INDEX idx_project_invites_invite_token ON project_invites(invite_token);
+CREATE INDEX idx_project_invites_expires_at ON project_invites(expires_at);
+CREATE INDEX idx_project_invites_is_active ON project_invites(is_active);
+
+-- ============================================================================
 -- SYNC EVENTS TABLE (audit trail of sync activity)
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS sync_events (
