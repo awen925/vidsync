@@ -174,16 +174,54 @@ export class SyncthingManager {
           rejectUnauthorized: false,
         },
         (res) => {
-          resolve(res.statusCode === 200 || res.statusCode === 204);
+          if (res.statusCode === 200 || res.statusCode === 204) {
+            // Successfully deleted folder, now signal Syncthing to reload config
+            this.restartSyncthingFolder(apiKey, projectId)
+              .then(() => resolve(true))
+              .catch(() => resolve(true)); // Still resolve true even if restart fails
+          } else {
+            if (isDevelopment()) {
+              console.error(`[Syncthing] Failed to remove folder: ${res.statusCode}`);
+            }
+            resolve(false);
+          }
         }
       );
 
-      req.on('error', () => resolve(false));
+      req.on('error', (err) => {
+        if (isDevelopment()) console.error('[Syncthing] Remove folder error:', err);
+        resolve(false);
+      });
       req.end();
     });
   }
 
-  async startForProject(projectId: string, localPath?: string): Promise<{ success: boolean; pid?: number; homeDir?: string; error?: string }> {
+  private async restartSyncthingFolder(apiKey: string, projectId: string): Promise<void> {
+    return new Promise((resolve) => {
+      // Some Syncthing versions require a POST to /rest/system/config to apply config changes
+      const req = https.request(
+        {
+          hostname: 'localhost',
+          port: this.SYNCTHING_API_PORT,
+          path: `/rest/system/config/insync`,
+          method: 'POST',
+          headers: {
+            'X-API-Key': apiKey,
+          },
+          rejectUnauthorized: false,
+        },
+        (res) => {
+          if (isDevelopment()) {
+            console.log(`[Syncthing] Config reload request status: ${res.statusCode}`);
+          }
+          resolve();
+        }
+      );
+
+      req.on('error', () => resolve());
+      req.end();
+    });
+  }  async startForProject(projectId: string, localPath?: string): Promise<{ success: boolean; pid?: number; homeDir?: string; error?: string }> {
     // If project's already configured, return
     if (this.instances.has(projectId)) {
       const info = this.instances.get(projectId)!;

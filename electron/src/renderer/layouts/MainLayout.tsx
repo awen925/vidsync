@@ -112,8 +112,15 @@ const MainLayout: React.FC = () => {
             >
               <MenuIcon size={24} />
             </IconButton>
-            <Box sx={{ fontSize: '1.25rem', fontWeight: 700 }}>
-              📹 Vidsync
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+              <img
+                src="/icons/logo1.png"
+                alt="Vidsync"
+                style={{ height: 32, width: 'auto' }}
+              />
+              <Box sx={{ fontSize: '1.25rem', fontWeight: 700 }}>
+                Vidsync
+              </Box>
             </Box>
           </Box>
 

@@ -40,6 +40,7 @@ import {
   ArrowLeft,
   Users,
   Link as LinkIcon,
+  AlertCircle,
 } from 'lucide-react';
 import { cloudAPI } from '../../hooks/useCloudApi';
 
@@ -75,6 +76,12 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
   const [loading, setLoading] = useState(false);
   const [filesLoading, setFilesLoading] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editingProject, setEditingProject] = useState<Project | null>(null);
+  const [editProjectName, setEditProjectName] = useState('');
+  const [editProjectDesc, setEditProjectDesc] = useState('');
+  const [editProjectLocalPath, setEditProjectLocalPath] = useState('');
+  const [editPathWarning, setEditPathWarning] = useState(false);
   const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
   const [inviteCode, setInviteCode] = useState('');
   const [copiedCode, setCopiedCode] = useState(false);
@@ -285,6 +292,73 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
       await fetchProjects();
     } catch (error) {
       console.error('Failed to delete project:', error);
+    }
+  };
+
+  const handleOpenEditDialog = (project: Project) => {
+    setEditingProject(project);
+    setEditProjectName(project.name);
+    setEditProjectDesc(project.description || '');
+    setEditProjectLocalPath(project.local_path || '');
+    setEditPathWarning(false);
+    setEditDialogOpen(true);
+    handleMenuClose();
+  };
+
+  const handleEditProjectLocalPath = async () => {
+    try {
+      const path = await (window as any).api.openDirectory();
+      if (path) {
+        setEditProjectLocalPath(path);
+        // Show warning if changing local path
+        if (path !== editingProject?.local_path) {
+          setEditPathWarning(true);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to select directory:', error);
+    }
+  };
+
+  const handleSaveEditProject = async () => {
+    if (!editingProject) return;
+    
+    // Check if path has changed significantly
+    const pathChanged = editProjectLocalPath !== editingProject.local_path;
+    if (pathChanged && editProjectLocalPath) {
+      // Show warning modal
+      setEditPathWarning(true);
+      return;
+    }
+    
+    // If no path change or warning already confirmed, proceed with save
+    await performEditProjectSave();
+  };
+
+  const performEditProjectSave = async () => {
+    if (!editingProject) return;
+    try {
+      await cloudAPI.put(`/projects/${editingProject.id}`, {
+        name: editProjectName,
+        description: editProjectDesc,
+        local_path: editProjectLocalPath || null,
+      });
+
+      // If local path was changed, update Syncthing
+      if (editProjectLocalPath && editProjectLocalPath !== editingProject.local_path) {
+        try {
+          await (window as any).api.syncthingStartForProject(editingProject.id, editProjectLocalPath);
+        } catch (syncError) {
+          console.warn('Failed to update Syncthing:', syncError);
+        }
+      }
+
+      setEditDialogOpen(false);
+      setEditingProject(null);
+      setEditPathWarning(false);
+      await fetchProjects();
+    } catch (error) {
+      console.error('Failed to update project:', error);
     }
   };
 
@@ -599,6 +673,89 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
         </DialogActions>
       </Dialog>
 
+      {/* Edit Project Dialog */}
+      <Dialog open={editDialogOpen} onClose={() => setEditDialogOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Edit Project</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 2 }}>
+            <TextField
+              fullWidth
+              label="Project Name"
+              placeholder="Enter project name"
+              value={editProjectName}
+              onChange={(e) => setEditProjectName(e.target.value)}
+            />
+            <TextField
+              fullWidth
+              label="Description"
+              placeholder="Optional description"
+              value={editProjectDesc}
+              onChange={(e) => setEditProjectDesc(e.target.value)}
+              multiline
+              rows={2}
+            />
+            <Stack spacing={1}>
+              <TextField
+                fullWidth
+                label="Local Path (Optional)"
+                placeholder="Path to sync folder (e.g., /home/user/Videos)"
+                value={editProjectLocalPath}
+                onChange={(e) => setEditProjectLocalPath(e.target.value)}
+                helperText="If set, files will load instantly from your local folder"
+              />
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={handleEditProjectLocalPath}
+                sx={{ alignSelf: 'flex-start' }}
+              >
+                Browse Folder
+              </Button>
+            </Stack>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setEditDialogOpen(false)}>Cancel</Button>
+          <Button variant="contained" onClick={handleSaveEditProject}>Save Changes</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Path Change Warning Dialog */}
+      <Dialog open={editPathWarning} onClose={() => setEditPathWarning(false)} maxWidth="sm">
+        <DialogTitle sx={{ color: '#d32f2f', display: 'flex', alignItems: 'center', gap: 1 }}>
+          <AlertCircle size={24} />
+          Large Local Path Change
+        </DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 2 }}>
+            <Alert severity="warning">
+              <Typography variant="body2">
+                You've made a significant change to the local folder path. This may trigger a full re-synchronization,
+                which could be a large payload depending on the folder size.
+              </Typography>
+            </Alert>
+            <Typography variant="body2" sx={{ color: '#666' }}>
+              If this is a new folder with many files, consider:
+            </Typography>
+            <Typography component="ul" variant="body2" sx={{ color: '#666', pl: 2 }}>
+              <li>Creating a new project instead of modifying this one</li>
+              <li>Waiting for the sync to complete before accessing files</li>
+              <li>Checking your disk space and bandwidth</li>
+            </Typography>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setEditPathWarning(false)}>Cancel Edit</Button>
+          <Button 
+            variant="contained" 
+            color="warning"
+            onClick={performEditProjectSave}
+          >
+            Proceed Anyway
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       {/* Generate Invite Code Dialog */}
       <Dialog open={inviteDialogOpen} onClose={() => setInviteDialogOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -681,6 +838,9 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
         open={Boolean(menuAnchor)}
         onClose={handleMenuClose}
       >
+        <MenuItem onClick={() => selectedMenuProject && handleOpenEditDialog(selectedMenuProject)}>
+          <Typography variant="body2">Edit Project</Typography>
+        </MenuItem>
         <MenuItem onClick={handleDeleteProject}>
           <Trash2 size={16} style={{ marginRight: 8 }} />
           Delete Project
