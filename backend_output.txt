@@ -1,0 +1,14 @@
+
+> vidsync-cloud@1.0.0 dev
+> ts-node src/server.ts
+
+[WebSocket] Service initialized
+
+╔════════════════════════════════════╗
+║   Vidsync Cloud Server             ║
+║   HTTP + WebSocket on port 5000   ║
+║   Phase 2B: Delta Sync Ready        ║
+║   Phase 2C: Real-Time Enabled       ║
+╚════════════════════════════════════╝
+  
+[2025-11-18T21:00:52.477Z] POST /api/projects

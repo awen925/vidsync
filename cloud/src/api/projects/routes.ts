@@ -89,61 +89,103 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
     }
 
     // Generate initial snapshot ASYNCHRONOUSLY (don't block response)
-    // This runs in background and updates the snapshot when ready
+    // Wait for Syncthing folder to be created and indexed
     (async () => {
       try {
-        console.log(`[Background] Starting file list generation for project ${data.id}`);
+        console.log(`[Project] Starting async snapshot generation for ${data.id}`);
         
-        // Wait a bit for Syncthing to be ready
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        
-        // Get the syncthing config with API key from local config file
-        let syncConfig: any;
+        // Get Syncthing config
+        let syncConfig;
         try {
           syncConfig = getSyncthingConfig();
         } catch (err) {
-          console.warn(`[Background] Failed to get Syncthing config: ${err}`);
+          console.warn(`[Project] Failed to get Syncthing config: ${err}`);
           return;
         }
 
-        // Initialize SyncthingService with config
-        const service = new SyncthingService(
+        // Initialize SyncthingService
+        const syncthingService = new SyncthingService(
           syncConfig.apiKey,
           syncConfig.host,
           syncConfig.port
         );
-        
-        // Get real files from Syncthing
-        const files = await service.getFolderFiles(data.id, 5);
-        console.log(`[Background] Retrieved ${files.length} files for project ${data.id}`);
-        
-        // Convert Syncthing format to snapshot format
-        const snapshotFiles: Array<{
-          path: string;
-          name: string;
-          type: 'file' | 'folder';
-          size: number;
-          hash: string;
-          modifiedAt: string;
-        }> = files.map(f => ({
-          path: f.path,
-          name: f.name,
-          type: f.type === 'file' ? 'file' : 'folder',
-          size: f.size,
-          hash: '',
-          modifiedAt: f.modTime,
-        }));
 
-        // Save snapshot
-        await FileMetadataService.saveSnapshot(
-          data.id,
-          name,
-          snapshotFiles
-        );
+        // Retry logic: Wait for folder to be created and indexed
+        // Syncthing may need time to create the folder and scan it
+        let syncFiles = null;
+        let lastError = null;
+        const maxRetries = 6; // Try up to 6 times
+        const retryDelays = [1000, 2000, 3000, 5000, 5000, 5000]; // Wait: 1s, 2s, 3s, 5s, 5s, 5s
 
-        console.log(`[Background] Saved initial snapshot for project ${data.id} (${snapshotFiles.length} items)`);
-      } catch (snapshotErr) {
-        console.error(`[Background] Failed to generate initial snapshot: ${snapshotErr}`);
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+          try {
+            // Wait before attempting
+            await new Promise(resolve => setTimeout(resolve, retryDelays[attempt]));
+            
+            console.log(`[Project] Attempt ${attempt + 1}/${maxRetries} to fetch files for ${data.id}`);
+            
+            syncFiles = await syncthingService.getFolderFiles(data.id, 10);
+            console.log(`[Project] ✅ Successfully fetched files on attempt ${attempt + 1}`);
+            break; // Success, exit retry loop
+          } catch (err: any) {
+            lastError = err;
+            const errorMsg = err.message || String(err);
+            
+            // Check if we should retry
+            const shouldRetry = 
+              errorMsg.includes('no such folder') ||
+              errorMsg.includes('ECONNREFUSED') ||
+              errorMsg.includes('ETIMEDOUT') ||
+              errorMsg.includes('socket hang up');
+            
+            if (shouldRetry) {
+              // Retryable error, wait and try again
+              console.warn(`[Project] Retryable error (attempt ${attempt + 1}): ${errorMsg}`);
+              if (attempt === maxRetries - 1) {
+                // Last attempt failed
+                throw new Error(`Failed after ${maxRetries} attempts: ${errorMsg}`);
+              }
+              // Continue to next iteration
+            } else {
+              // Non-retryable error, fail immediately
+              throw err;
+            }
+          }
+        }
+
+        if (!syncFiles) {
+          throw lastError || new Error('Failed to fetch files: unknown error');
+        }
+
+        console.log(`[Project] Retrieved ${syncFiles.length} files from Syncthing for ${data.id}`);
+
+        if (syncFiles.length > 0) {
+          // Convert to snapshot format
+          const snapshotFiles: Array<{
+            path: string;
+            name: string;
+            type: 'file' | 'folder';
+            size: number;
+            hash: string;
+            modifiedAt: string;
+          }> = syncFiles.map(f => ({
+            path: f.path,
+            name: f.name,
+            type: f.type === 'file' ? 'file' : 'folder',
+            size: f.size,
+            hash: '',
+            modifiedAt: f.modTime,
+          }));
+
+          // Save snapshot to Supabase Storage
+          await FileMetadataService.saveSnapshot(data.id, name, snapshotFiles);
+          console.log(`[Project] ✅ Saved initial snapshot for ${data.id} with ${snapshotFiles.length} files`);
+        } else {
+          console.log(`[Project] Syncthing folder is empty for ${data.id} (files will appear after syncing)`);
+        }
+      } catch (err) {
+        console.warn(`[Project] Failed to generate initial snapshot after retries: ${err}`);
+        // Continue anyway - snapshot can be generated later on demand via /files-list
       }
     })();
 
@@ -723,61 +765,105 @@ router.post('/join', authMiddleware, async (req: Request, res: Response) => {
       // Continue anyway - device can be added manually later
     }
 
-    // Generate snapshot when user joins (optional) - ASYNCHRONOUSLY
+    // Generate snapshot when user joins (optional) - ASYNCHRONOUSLY with retry
+    // User may already have files synced, so try to capture them
     (async () => {
       try {
-        console.log(`[Background] Generating file list for project ${projectId} (user joined)`);
+        console.log(`[Join] Starting async snapshot generation for ${projectId}`);
         
-        // Wait a bit for Syncthing to be ready
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        
-        // Get the syncthing config with API key from local config file
-        let syncConfig: any;
+        // Get Syncthing config
+        let syncConfig;
         try {
           syncConfig = getSyncthingConfig();
         } catch (err) {
-          console.warn(`[Background] Failed to get Syncthing config for join: ${err}`);
+          console.warn(`[Join] Failed to get Syncthing config: ${err}`);
           return;
         }
 
-        // Initialize SyncthingService with config
-        const service = new SyncthingService(
+        // Initialize SyncthingService
+        const syncthingService = new SyncthingService(
           syncConfig.apiKey,
           syncConfig.host,
           syncConfig.port
         );
-        
-        // Get real files from Syncthing using project UUID as folder ID
-        const files = await service.getFolderFiles(projectId, 5);
-        console.log(`[Background] Retrieved ${files.length} files for joined project ${projectId}`);
-        
-        // Convert Syncthing format to snapshot format
-        const snapshotFiles: Array<{
+
+        // Retry logic: Try to fetch files multiple times
+        let syncFiles: Array<{
           path: string;
           name: string;
-          type: 'file' | 'folder';
+          type: 'file' | 'dir';
           size: number;
-          hash: string;
-          modifiedAt: string;
-        }> = files.map(f => ({
-          path: f.path,
-          name: f.name,
-          type: f.type === 'file' ? 'file' : 'folder',
-          size: f.size,
-          hash: '',
-          modifiedAt: f.modTime,
-        }));
+          modTime: string;
+          syncStatus: 'synced' | 'syncing' | 'pending' | 'error';
+        }> | null = null;
+        let lastError = null;
+        const maxRetries = 4; // Try up to 4 times
+        const retryDelays = [1000, 2000, 3000, 5000]; // Wait: 1s, 2s, 3s, 5s
 
-        // Save snapshot
-        await FileMetadataService.saveSnapshot(
-          projectId,
-          project.name,
-          snapshotFiles
-        );
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+          try {
+            // Wait before attempting
+            await new Promise(resolve => setTimeout(resolve, retryDelays[attempt]));
+            
+            console.log(`[Join] Attempt ${attempt + 1}/${maxRetries} to fetch files for ${projectId}`);
+            
+            syncFiles = await syncthingService.getFolderFiles(projectId, 10);
+            console.log(`[Join] ✅ Successfully fetched files on attempt ${attempt + 1}`);
+            break; // Success, exit retry loop
+          } catch (err: any) {
+            lastError = err;
+            const errorMsg = err.message || String(err);
+            
+            // Check if we should retry
+            const shouldRetry = 
+              errorMsg.includes('no such folder') ||
+              errorMsg.includes('ECONNREFUSED') ||
+              errorMsg.includes('ETIMEDOUT') ||
+              errorMsg.includes('socket hang up');
+            
+            if (shouldRetry) {
+              // Retryable error
+              console.warn(`[Join] Retryable error (attempt ${attempt + 1}): ${errorMsg}`);
+              if (attempt === maxRetries - 1) {
+                // Last attempt, don't throw, just skip
+                console.log(`[Join] Failed after ${maxRetries} attempts, skipping snapshot`);
+                syncFiles = [];
+                break;
+              }
+            } else {
+              // Non-retryable error, skip
+              throw err;
+            }
+          }
+        }
 
-        console.log(`[Background] Saved snapshot for joined project ${projectId} (${snapshotFiles.length} items)`);
-      } catch (snapshotErr) {
-        console.error(`[Background] Failed to generate snapshot on join: ${snapshotErr}`);
+        if (syncFiles && syncFiles.length > 0) {
+          // Convert to snapshot format
+          const snapshotFiles: Array<{
+            path: string;
+            name: string;
+            type: 'file' | 'folder';
+            size: number;
+            hash: string;
+            modifiedAt: string;
+          }> = syncFiles.map(f => ({
+            path: f.path,
+            name: f.name,
+            type: f.type === 'file' ? 'file' : 'folder',
+            size: f.size,
+            hash: '',
+            modifiedAt: f.modTime,
+          }));
+
+          // Save snapshot to Supabase Storage
+          await FileMetadataService.saveSnapshot(projectId, project.name, snapshotFiles);
+          console.log(`[Join] ✅ Saved snapshot for ${projectId} with ${snapshotFiles.length} files`);
+        } else {
+          console.log(`[Join] No files synced yet for ${projectId}`);
+        }
+      } catch (err) {
+        console.warn(`[Join] Failed to generate snapshot: ${err}`);
+        // Continue anyway - snapshot can be generated later on demand
       }
     })();
 
@@ -910,6 +996,7 @@ router.get('/:projectId/sync-events', authMiddleware, async (req: Request, res: 
 /**
  * GET /api/projects/:projectId/files-list
  * Paginated file list from latest snapshot stored in Supabase Storage
+ * Generates snapshot on-demand if not available
  * For invitees/members to browse files
  */
 router.get('/:projectId/files-list', authMiddleware, async (req: Request, res: Response) => {
@@ -921,7 +1008,7 @@ router.get('/:projectId/files-list', authMiddleware, async (req: Request, res: R
     // Verify user is member (owner or accepted invite)
     const { data: project } = await supabase
       .from('projects')
-      .select('owner_id, snapshot_url')
+      .select('owner_id, snapshot_url, name')
       .eq('id', projectId)
       .single();
 
@@ -949,13 +1036,80 @@ router.get('/:projectId/files-list', authMiddleware, async (req: Request, res: R
 
     // Load snapshot from storage if available
     let allFiles: any[] = [];
+    
     if (project.snapshot_url) {
       try {
         const snapshot = await FileMetadataService.loadSnapshot(project.snapshot_url);
         allFiles = flattenFileTree(snapshot.files || []);
       } catch (err) {
         console.warn('Failed to load snapshot:', err);
-        // Continue with empty file list
+        // Continue - will generate new snapshot below
+      }
+    }
+    
+    // If no snapshot, generate one from Syncthing
+    if (allFiles.length === 0 && !project.snapshot_url) {
+      console.log(`[files-list] Generating initial snapshot for project ${projectId}`);
+      try {
+        // Get Syncthing config
+        let syncConfig;
+        try {
+          syncConfig = getSyncthingConfig();
+        } catch (err) {
+          console.warn(`[files-list] Failed to get Syncthing config, returning empty list:`, err);
+          return res.json({
+            files: [],
+            pagination: {
+              total: 0,
+              limit: pageLimit,
+              offset: pageOffset,
+              hasMore: false,
+            },
+          });
+        }
+
+        // Query Syncthing for files
+        const syncthingService = new SyncthingService(
+          syncConfig.apiKey,
+          syncConfig.host,
+          syncConfig.port
+        );
+
+        const syncFiles = await syncthingService.getFolderFiles(projectId, 10);
+        console.log(`[files-list] Retrieved ${syncFiles.length} files from Syncthing`);
+
+        // Convert to snapshot format
+        const snapshotFiles: Array<{
+          path: string;
+          name: string;
+          type: 'file' | 'folder';
+          size: number;
+          hash: string;
+          modifiedAt: string;
+        }> = syncFiles.map(f => ({
+          path: f.path,
+          name: f.name,
+          type: f.type === 'file' ? 'file' : 'folder',
+          size: f.size,
+          hash: '',
+          modifiedAt: f.modTime,
+        }));
+
+        // Save snapshot asynchronously (don't wait)
+        (async () => {
+          try {
+            await FileMetadataService.saveSnapshot(projectId, project.name, snapshotFiles);
+            console.log(`[files-list] Saved snapshot for project ${projectId}`);
+          } catch (err) {
+            console.warn(`[files-list] Failed to save snapshot:`, err);
+          }
+        })();
+
+        // Return current files
+        allFiles = flattenFileTree(snapshotFiles);
+      } catch (err) {
+        console.error(`[files-list] Failed to generate snapshot:`, err);
+        // Return empty - user can try again
       }
     }
 

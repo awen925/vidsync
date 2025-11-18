@@ -358,6 +358,12 @@ export class SyncthingService {
         `/rest/db/browse?folder=${folderId}&levels=${levels}&prefix=`
       );
 
+      console.log(`[getFolderFiles] Response type: ${typeof browseData}`);
+      console.log(`[getFolderFiles] Is array: ${Array.isArray(browseData)}`);
+      console.log(`[getFolderFiles] Response keys (first 15):`, 
+        Array.isArray(browseData) ? 'N/A (array)' : Object.keys(browseData).slice(0, 15)
+      );
+
       // Also get folder status to determine sync state
       const folderStatus = await this.getFolderStatus(folderId);
 
@@ -371,11 +377,26 @@ export class SyncthingService {
       }> = [];
 
       // Recursively flatten the file tree
-      const flatten = (items: any[], prefix: string = ''): void => {
-        if (!items) return;
+      let maxDepthReached = 0;
+      
+      const flatten = (items: any[], prefix: string = '', depth: number = 0): void => {
+        if (!items) {
+          console.warn(`[getFolderFiles] Items is null/undefined at prefix: ${prefix}`);
+          return;
+        }
 
-        for (const item of items) {
+        maxDepthReached = Math.max(maxDepthReached, depth);
+        console.log(`[getFolderFiles] Processing ${items.length} items at prefix: ${prefix} (depth: ${depth})`);
+
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
           const path = prefix ? `${prefix}/${item.name}` : item.name;
+          const hasChildren = !!item.children;
+          const childCount = item.children ? item.children.length : 0;
+
+          if (i === 0 && depth === 0) {
+            console.log(`[getFolderFiles] First item details: name=${item.name}, type=${item.type}, hasChildren=${hasChildren}, childCount=${childCount}`);
+          }
 
           // Determine sync status based on folder-level sync state
           let syncStatus: 'synced' | 'syncing' | 'pending' | 'error' = 'synced';
@@ -404,15 +425,49 @@ export class SyncthingService {
           });
 
           // Recursively process children
-          if (item.children && item.type === 'dir') {
-            flatten(item.children, path);
+          if (item.children && Array.isArray(item.children) && item.children.length > 0) {
+            console.log(`[getFolderFiles] Recursing into ${item.name} with ${childCount} children (depth ${depth} -> ${depth + 1})`);
+            flatten(item.children, path, depth + 1);
           }
         }
       };
 
-      // Flatten the root children
-      flatten(browseData.children);
+      // Handle different response structures
+      // The response could be:
+      // 1. An object with 'children' property: { children: [...] }
+      // 2. An object that IS the root with nested children
+      // 3. A direct array
+      
+      let itemsToFlatten: any[] = [];
+      
+      if (Array.isArray(browseData)) {
+        // Direct array response
+        itemsToFlatten = browseData;
+        console.log(`[getFolderFiles] Using direct array response`);
+      } else if (browseData.children && Array.isArray(browseData.children)) {
+        // Wrapped in children property
+        itemsToFlatten = browseData.children;
+        console.log(`[getFolderFiles] Using browseData.children`);
+      } else if (browseData.type === 'dir' && browseData.children) {
+        // Root is a directory with children
+        itemsToFlatten = browseData.children;
+        console.log(`[getFolderFiles] Using root children (root is dir)`);
+      } else {
+        // Maybe the response itself is the folder object
+        console.warn(`[getFolderFiles] Unexpected response structure:`, {
+          type: browseData.type,
+          hasChildren: !!browseData.children,
+          hasName: !!browseData.name,
+          keys: Object.keys(browseData).slice(0, 10),
+        });
+      }
 
+      // Flatten the items
+      if (itemsToFlatten && itemsToFlatten.length > 0) {
+        flatten(itemsToFlatten);
+      }
+
+      console.log(`[getFolderFiles] ✅ Successfully flattened ${files.length} files for folder ${folderId} (max depth: ${maxDepthReached})`);
       return files;
     } catch (error) {
       console.error(`Failed to get folder files for ${folderId}:`, error);
