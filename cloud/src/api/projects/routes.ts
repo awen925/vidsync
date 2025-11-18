@@ -1593,46 +1593,20 @@ router.get('/:projectId/files-paginated', authMiddleware, async (req: Request, r
     // Otherwise, show files whose path starts with folderPath
     const pathFilter = folderPath === '/' ? '%' : `${String(folderPath)}%`;
 
-    // Fetch total count
-    const { count } = await supabase
-      .from('remote_files')
-      .select('*', { count: 'exact', head: true })
-      .eq('project_id', projectId)
-      .like('path', pathFilter)
-      .is('deleted_by', null);
-
-    // Fetch paginated files
-    const offset = (pageNum - 1) * perPage;
-    const { data: files, error: filesErr } = await supabase
-      .from('remote_files')
-      .select('*')
-      .eq('project_id', projectId)
-      .like('path', pathFilter)
-      .is('deleted_by', null)
-      .order('is_directory', { ascending: false })  // Folders first
-      .order('name')                                 // Then by name
-      .range(offset, offset + perPage - 1);
-
-    if (filesErr) {
-      console.error('Failed to fetch remote files:', filesErr.message);
-      return res.status(500).json({ error: 'Failed to fetch files' });
-    }
-
-    const totalCount = count || 0;
-    const totalPages = Math.ceil(totalCount / perPage);
-    const hasMore = pageNum < totalPages;
-
+    // NOTE: Legacy remote_files table removed - using Syncthing API instead
+    // These endpoints now return mock data as they are not used in production
+    // The new /file-sync-status endpoint provides real-time sync status via Syncthing
+    
     res.json({
       success: true,
-      files: files || [],
+      files: [],
       pagination: {
-        page: pageNum,
-        per_page: perPage,
-        total: totalCount,
-        total_pages: totalPages,
-        has_more: hasMore,
+        total: 0,
+        perPage: perPage,
+        pageNum: pageNum,
+        hasMore: false,
       },
-      path: folderPath,
+      note: 'Files list deprecated - use /file-sync-status endpoint for sync status',
     });
   } catch (error) {
     console.error('Get paginated files exception:', error);
@@ -1724,40 +1698,13 @@ router.post('/:projectId/files/update', authMiddleware, async (req: Request, res
 
       try {
         if (op === 'delete') {
-          // Soft delete: mark as deleted but keep record for history
-          const { error: updateErr } = await supabase
-            .from('remote_files')
-            .update({
-              deleted_by: userId,
-              deleted_at: new Date().toISOString(),
-            })
-            .eq('project_id', projectId)
-            .eq('path', filePath);
-
-          if (!updateErr) {
-            results.push({ path: filePath, op: 'delete', status: 'success' });
-          }
+          // Legacy: remote_files table no longer used
+          // File deletions are now handled via Syncthing API
+          results.push({ path: filePath, op: 'delete', status: 'deprecated' });
         } else {
-          // Upsert file: create or update on (project_id, path)
-          const { error: upsertErr } = await supabase
-            .from('remote_files')
-            .upsert({
-              project_id: projectId,
-              path: filePath,
-              name: filePath.split('/').pop() || filePath,
-              size: size || 0,
-              is_directory: false,
-              mime_type: getMimeType(filePath),
-              file_hash: hash || '',
-              modified_at: new Date(mtime || Date.now()).toISOString(),
-              owner_id: userId,
-            })
-            .eq('project_id', projectId)
-            .eq('path', filePath);
-
-          if (!upsertErr) {
-            results.push({ path: filePath, op, status: 'success' });
-          }
+          // Legacy: remote_files table no longer used
+          // File updates are now handled via Syncthing API
+          results.push({ path: filePath, op, status: 'deprecated' });
         }
 
         // Append to project_events (immutable delta log)
