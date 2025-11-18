@@ -23,7 +23,6 @@ export const authMiddleware = async (
 
     // Use Supabase to validate token and get user
     const resp = await supabase.auth.getUser(token);
-    console.log('Auth middleware user fetch response:', resp);
     const { data, error } = resp;
 
     if (error || !data?.user) {

@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabaseClient';
 import { getWebSocketService } from '../../services/webSocketService';
 import { SyncthingService } from '../../services/syncthingService';
 import { FileMetadataService } from '../../services/fileMetadataService';
+import { getSyncthingConfig } from '../../utils/syncthingConfig';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -41,16 +42,12 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
 
     if (!name) return res.status(400).json({ error: 'Project name required' });
 
-    // Generate folder ID (use project UUID-based format)
-    const folderId = `proj_${name.toLowerCase().replace(/\s+/g, '_')}_${Date.now()}`;
-
     const payload = {
       owner_id: ownerId,
       name,
       description: description || null,
       local_path: local_path || null,
       auto_sync: typeof auto_sync === 'boolean' ? auto_sync : true,
-      syncthing_folder_id: folderId, // Store folder ID
     };
 
     const { data, error } = await supabase.from('projects').insert(payload).select().single();
@@ -76,8 +73,9 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
           parseInt(process.env.SYNCTHING_PORT || '8384')
         );
 
+        // Use project UUID as the Syncthing folder ID
         await syncthingService.createFolder(
-          folderId,
+          data.id,
           name,
           local_path || `/tmp/vidsync/${data.id}`,
           devices[0].syncthing_id
@@ -1019,14 +1017,28 @@ router.get('/:projectId/file-sync-status', authMiddleware, async (req: Request, 
       return res.json(cached);
     }
 
-    // Query Syncthing API
+    // Read Syncthing config from local device
+    let syncConfig;
+    try {
+      syncConfig = getSyncthingConfig();
+      console.log(`[file-sync-status] Using local Syncthing config: ${syncConfig.host}:${syncConfig.port}`);
+    } catch (configError) {
+      console.error(`[file-sync-status] Failed to read Syncthing config:`, configError);
+      return res.status(503).json({ 
+        error: 'Syncthing not configured',
+        message: (configError as Error).message 
+      });
+    }
+
+    // Query Syncthing API using local config
     const syncthingService = new SyncthingService(
-      process.env.SYNCTHING_API_KEY || '',
-      process.env.SYNCTHING_HOST || 'localhost',
-      parseInt(process.env.SYNCTHING_PORT || '8384')
+      syncConfig.apiKey,
+      syncConfig.host,
+      syncConfig.port
     );
 
-    const folderStatus = await syncthingService.getFolderStatus(project.syncthing_folder_id);
+    // Use project UUID as folder ID (new standard - matches Syncthing folder naming)
+    const folderStatus = await syncthingService.getFolderStatus(projectId);
 
     // Calculate completion percentage
     const completion = folderStatus.globalBytes > 0

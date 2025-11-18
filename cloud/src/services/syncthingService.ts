@@ -1,3 +1,4 @@
+import http from 'http';
 import https from 'https';
 
 interface SyncthingDeviceInfo {
@@ -26,33 +27,134 @@ export class SyncthingService {
   private host: string = 'localhost';
   private port: number = 8384;
   private timeout: number = 30000;
+  private csrfToken: string | null = null;
+  private protocol: 'http' | 'https' = 'http'; // Default to HTTP for local Syncthing
 
   constructor(apiKey: string, host: string = 'localhost', port: number = 8384) {
     this.apiKey = apiKey;
     this.host = host;
     this.port = port;
+    console.log(`[SyncthingService] Initialized with apiKey: ${apiKey.substring(0, 8)}..., host: ${host}, port: ${port}`);
   }
 
-  // Make HTTPS request to Syncthing API
+  // Note: Syncthing CSRF protection is typically only enforced on state-changing requests (POST/PUT/DELETE)
+  // For GET requests with valid API key, CSRF token is not required
+  // This method is kept for future use if needed
+  private async getCsrfToken(): Promise<string | null> {
+    // Return cached token
+    if (this.csrfToken) {
+      console.log(`[SyncthingService] Using cached CSRF token: ${this.csrfToken.substring(0, 8)}...`);
+      return this.csrfToken;
+    }
+
+    // Try to fetch CSRF token from the API
+    // First, try without auth to get the CSRF token from headers
+    return new Promise((resolve) => {
+      const protocol = this.protocol === 'https' ? https : http;
+      
+      const options = {
+        hostname: this.host,
+        port: this.port,
+        path: '/',
+        method: 'GET',
+        headers: {
+          // Don't send API key on initial request - just get CSRF token
+        },
+        rejectUnauthorized: false,
+      };
+
+      console.log(`[SyncthingService] Attempting to fetch CSRF token from ${this.protocol}://${this.host}:${this.port}${options.path}`);
+
+      const req = protocol.request(options, (res) => {
+        console.log(`[SyncthingService] CSRF fetch response status: ${res.statusCode}`);
+        console.log(`[SyncthingService] Response headers:`, res.headers);
+        
+        let data = '';
+        res.on('data', (chunk) => {
+          data += chunk;
+        });
+
+        res.on('end', () => {
+          // Extract CSRF token from response headers if present
+          let csrfToken = res.headers['x-csrf-token'] as string;
+          
+          if (!csrfToken && data) {
+            console.log(`[SyncthingService] Response body:`, data.substring(0, 200));
+            // Try to extract from HTML if it's a web page
+            const match = data.match(/csrfToken["'\s]*[:=]\s*["']([^"']+)["']/);
+            if (match) {
+              csrfToken = match[1];
+            }
+          }
+          
+          if (csrfToken) {
+            console.log(`[SyncthingService] Found CSRF token: ${csrfToken.substring(0, 8)}...`);
+            this.csrfToken = csrfToken;
+            resolve(csrfToken);
+          } else {
+            console.log(`[SyncthingService] No CSRF token found in response, returning null`);
+            resolve(null);
+          }
+        });
+      });
+
+      req.on('error', (error) => {
+        console.error(`[SyncthingService] Error fetching CSRF token:`, error);
+        resolve(null);
+      });
+
+      req.setTimeout(this.timeout, () => {
+        console.warn(`[SyncthingService] CSRF token request timeout`);
+        req.destroy();
+        resolve(null);
+      });
+
+      req.end();
+    });
+  }
+
+  // Make HTTP/HTTPS request to Syncthing API
   private async makeRequest(
     path: string,
     method: string = 'GET',
     body?: any
   ): Promise<any> {
+    // Get CSRF token first - this is REQUIRED by Syncthing
+    const csrfToken = await this.getCsrfToken();
+    console.log(`[SyncthingService] Making ${method} request to ${path}, API key: ${this.apiKey.substring(0, 8)}..., CSRF token: ${csrfToken ? csrfToken.substring(0, 8) + '...' : 'null'}`);
+
     return new Promise((resolve, reject) => {
+      const protocol = this.protocol === 'https' ? https : http;
+      
+      const headers: any = {
+        'X-API-Key': this.apiKey,
+        'Content-Type': 'application/json',
+      };
+
+      // ALWAYS add CSRF token if we have one - Syncthing requires it
+      if (csrfToken) {
+        headers['X-CSRF-Token'] = csrfToken;
+        console.log(`[SyncthingService] Adding CSRF token to headers`);
+      } else {
+        console.warn(`[SyncthingService] WARNING: No CSRF token available - request may fail with 403`);
+      }
+
       const options = {
         hostname: this.host,
         port: this.port,
         path,
         method,
-        headers: {
-          'X-API-Key': this.apiKey,
-          'Content-Type': 'application/json',
-        },
+        headers,
         rejectUnauthorized: false, // For self-signed certs
       };
 
-      const req = https.request(options, (res) => {
+      console.log(`[SyncthingService] Request:`, { 
+        url: `${this.protocol}://${this.host}:${this.port}${path}`,
+        method,
+        hasCsrfToken: !!csrfToken,
+      });
+
+      const req = protocol.request(options, (res) => {
         let data = '';
 
         res.on('data', (chunk) => {
@@ -61,24 +163,32 @@ export class SyncthingService {
 
         res.on('end', () => {
           try {
+            console.log(`[SyncthingService] Response status: ${res.statusCode}, data length: ${data.length}`);
+            
             if (res.statusCode && res.statusCode >= 400) {
+              console.error(`[SyncthingService] API error: ${res.statusCode} - ${data}`);
               reject(new Error(`Syncthing API error: ${res.statusCode} - ${data}`));
             } else {
               resolve(data ? JSON.parse(data) : {});
             }
           } catch (e) {
+            console.error(`[SyncthingService] Error parsing response:`, e);
             reject(e);
           }
         });
       });
 
-      req.on('error', reject);
+      req.on('error', (error) => {
+        console.error(`[SyncthingService] Request error:`, error);
+        reject(error);
+      });
 
       if (body) {
         req.write(JSON.stringify(body));
       }
 
       req.setTimeout(this.timeout, () => {
+        console.warn(`[SyncthingService] Request timeout`);
         req.destroy();
         reject(new Error('Syncthing API request timeout'));
       });

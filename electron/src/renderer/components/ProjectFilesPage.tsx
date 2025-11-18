@@ -81,14 +81,20 @@ export const ProjectFilesPage: React.FC<ProjectFilesPageProps> = ({ projectId, i
     fetchFiles();
   }, [projectId, page]);
 
-  // Poll for sync status every 3 seconds
+  // Poll for sync status every 5 seconds (matches backend cache TTL)
   useEffect(() => {
     const fetchSyncStatus = async () => {
       setSyncStatusLoading(true);
       setSyncStatusError(null);
       try {
         const response = await cloudAPI.get(`/projects/${projectId}/file-sync-status`);
-        setFolderSyncStatus(response.data);
+        // Only update state if data actually changed to prevent unnecessary re-renders
+        setFolderSyncStatus((prevStatus) => {
+          if (JSON.stringify(prevStatus) === JSON.stringify(response.data)) {
+            return prevStatus;
+          }
+          return response.data;
+        });
       } catch (err) {
         console.error('Failed to fetch sync status:', err);
         setSyncStatusError(err instanceof Error ? err.message : 'Failed to fetch sync status');
@@ -101,8 +107,8 @@ export const ProjectFilesPage: React.FC<ProjectFilesPageProps> = ({ projectId, i
     // Fetch immediately
     fetchSyncStatus();
 
-    // Then poll every 3 seconds
-    const pollInterval = setInterval(fetchSyncStatus, 3000);
+    // Then poll every 5 seconds (matches backend cache TTL of 5000ms)
+    const pollInterval = setInterval(fetchSyncStatus, 5000);
 
     return () => clearInterval(pollInterval);
   }, [projectId]);
