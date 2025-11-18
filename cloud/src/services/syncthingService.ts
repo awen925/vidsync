@@ -329,6 +329,144 @@ export class SyncthingService {
     }
   }
 
+  // Wait for folder to finish scanning using event stream
+  // Returns when LocalIndexUpdated event is received for the folder
+  async waitForFolderScanned(folderId: string, timeoutMs: number = 60000): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const protocol = this.protocol === 'https' ? https : http;
+      let isResolved = false;
+
+      const timeout = setTimeout(() => {
+        if (!isResolved) {
+          isResolved = true;
+          req.destroy();
+          reject(new Error(`Timeout waiting for folder ${folderId} to be scanned (${timeoutMs}ms)`));
+        }
+      }, timeoutMs);
+
+      const options = {
+        hostname: this.host,
+        port: this.port,
+        path: '/rest/events?since=0',
+        method: 'GET',
+        headers: {
+          'X-API-Key': this.apiKey,
+          'Connection': 'keep-alive',
+          'Cache-Control': 'no-cache',
+        },
+        rejectUnauthorized: false,
+      };
+
+      console.log(`[SyncthingService] Listening for events for folder ${folderId}...`);
+
+      const req = protocol.request(options, (res) => {
+        let buffer = '';
+        let inArray = false;
+        let eventCount = 0;
+
+        res.on('data', (chunk: Buffer) => {
+          buffer += chunk.toString();
+
+          // Process buffer looking for complete JSON objects
+          while (buffer.length > 0) {
+            const trimmed = buffer.trimStart();
+            
+            // Skip array markers
+            if (trimmed.startsWith('[')) {
+              buffer = trimmed.substring(1);
+              inArray = true;
+              continue;
+            }
+            if (trimmed.startsWith(']')) {
+              buffer = trimmed.substring(1);
+              continue;
+            }
+            
+            // Skip commas
+            if (trimmed.startsWith(',')) {
+              buffer = trimmed.substring(1);
+              continue;
+            }
+
+            // Look for a complete JSON object
+            if (trimmed.startsWith('{')) {
+              let braceCount = 0;
+              let endIndex = -1;
+
+              for (let i = 0; i < trimmed.length; i++) {
+                if (trimmed[i] === '{') braceCount++;
+                if (trimmed[i] === '}') braceCount--;
+                if (braceCount === 0) {
+                  endIndex = i;
+                  break;
+                }
+              }
+
+              if (endIndex === -1) {
+                // Incomplete object, wait for more data
+                break;
+              }
+
+              const jsonStr = trimmed.substring(0, endIndex + 1);
+              buffer = trimmed.substring(endIndex + 1);
+
+              try {
+                const event = JSON.parse(jsonStr);
+                eventCount++;
+
+                // Check for LocalIndexUpdated event for our folder
+                if (event.type === 'LocalIndexUpdated' && event.data?.folder === folderId) {
+                  console.log(`[SyncthingService] ✅ LocalIndexUpdated for folder ${folderId} (event #${eventCount})`);
+                  if (!isResolved) {
+                    isResolved = true;
+                    clearTimeout(timeout);
+                    req.destroy();
+                    resolve();
+                  }
+                  return;
+                }
+
+                // Debug: log relevant events
+                if (event.data?.folder === folderId) {
+                  console.log(`[SyncthingService] Event for ${folderId}: type=${event.type}`);
+                }
+              } catch (parseErr) {
+                console.debug(`[SyncthingService] Could not parse event: ${jsonStr.substring(0, 50)}`);
+              }
+            } else {
+              // Unknown character, skip it
+              buffer = trimmed.substring(1);
+            }
+          }
+        });
+
+        res.on('end', () => {
+          if (!isResolved) {
+            clearTimeout(timeout);
+            reject(new Error(`Event stream closed before LocalIndexUpdated received for folder ${folderId}`));
+          }
+        });
+
+        res.on('error', (error) => {
+          if (!isResolved) {
+            clearTimeout(timeout);
+            reject(error);
+          }
+        });
+      });
+
+      req.on('error', (error) => {
+        if (!isResolved) {
+          clearTimeout(timeout);
+          console.error(`[SyncthingService] Event stream request error:`, error);
+          reject(error);
+        }
+      });
+
+      req.end();
+    });
+  }
+
   // Get folder status
   async getFolderStatus(folderId: string): Promise<any> {
     try {

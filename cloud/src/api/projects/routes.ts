@@ -42,6 +42,31 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
 
     if (!name) return res.status(400).json({ error: 'Project name required' });
 
+    // Check for duplicate: same local_path for same owner (if local_path provided)
+    if (local_path && local_path.trim().length > 0) {
+      console.log(`[Project] Checking for duplicate project with local_path: ${local_path}`);
+
+      // Check if a project with same local_path already exists for this owner
+      const { data: existingProjects, error: dupErr } = await supabase
+        .from('projects')
+        .select('id, name, local_path')
+        .eq('owner_id', ownerId)
+        .eq('local_path', local_path);
+
+      console.log(`[Project] Duplicate check result:`, { existingCount: existingProjects?.length || 0, error: dupErr });
+
+      if (!dupErr && existingProjects && existingProjects.length > 0) {
+        const existing = existingProjects[0];
+        console.log(`[Project] ⚠️  Duplicate found: ${existing.name} (${existing.id})`);
+        return res.status(409).json({
+          error: `Project with path "${local_path}" already exists as "${existing.name}"`,
+          code: 'DUPLICATE_PROJECT_PATH',
+          existingProjectId: existing.id,
+          existingProjectName: existing.name,
+        });
+      }
+    }
+
     const payload = {
       owner_id: ownerId,
       name,
@@ -49,6 +74,8 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
       local_path: local_path || null,
       auto_sync: typeof auto_sync === 'boolean' ? auto_sync : true,
     };
+
+    console.log(`[Project] Creating new project:`, { name, local_path, ownerId });
 
     const { data, error } = await supabase.from('projects').insert(payload).select().single();
 
@@ -110,12 +137,22 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
           syncConfig.port
         );
 
-        // Retry logic: Wait for folder to be created and indexed
-        // Syncthing may need time to create the folder and scan it
+        // First: Wait for Syncthing to finish scanning the folder
+        // This uses the /rest/events endpoint to listen for LocalIndexUpdated
+        try {
+          console.log(`[Project] Waiting for Syncthing to scan folder ${data.id}...`);
+          await syncthingService.waitForFolderScanned(data.id, 60000); // Wait up to 60 seconds
+          console.log(`[Project] ✅ Folder scan complete for ${data.id}`);
+        } catch (scanWaitErr) {
+          console.warn(`[Project] Warning: Timeout or error waiting for scan: ${scanWaitErr}`);
+          // Continue anyway - folder might be ready even if event didn't fire
+        }
+
+        // Second: Fetch the file list after scan is complete
         let syncFiles = null;
         let lastError = null;
-        const maxRetries = 6; // Try up to 6 times
-        const retryDelays = [1000, 2000, 3000, 5000, 5000, 5000]; // Wait: 1s, 2s, 3s, 5s, 5s, 5s
+        const maxRetries = 3; // Now we only need 3 retries since scan is done
+        const retryDelays = [500, 1000, 2000]; // Much shorter delays: 0.5s, 1s, 2s
 
         for (let attempt = 0; attempt < maxRetries; attempt++) {
           try {
