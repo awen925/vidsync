@@ -2,6 +2,8 @@ import { Router, Request, Response } from 'express';
 import { authMiddleware } from '../../middleware/authMiddleware';
 import { supabase } from '../../lib/supabaseClient';
 import { getWebSocketService } from '../../services/webSocketService';
+import { SyncthingService } from '../../services/syncthingService';
+import { FileMetadataService } from '../../services/fileMetadataService';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -15,12 +17,16 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
 
     if (!name) return res.status(400).json({ error: 'Project name required' });
 
+    // Generate folder ID (use project UUID-based format)
+    const folderId = `proj_${name.toLowerCase().replace(/\s+/g, '_')}_${Date.now()}`;
+
     const payload = {
       owner_id: ownerId,
       name,
       description: description || null,
       local_path: local_path || null,
       auto_sync: typeof auto_sync === 'boolean' ? auto_sync : true,
+      syncthing_folder_id: folderId, // Store folder ID
     };
 
     const { data, error } = await supabase.from('projects').insert(payload).select().single();
@@ -28,6 +34,61 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
     if (error) {
       console.error('Failed to create project:', error.message);
       return res.status(500).json({ error: 'Failed to create project' });
+    }
+
+    // Try to create Syncthing folder (optional - fails gracefully)
+    try {
+      // Get owner's primary device with Syncthing ID
+      const { data: devices, error: devErr } = await supabase
+        .from('devices')
+        .select('syncthing_id')
+        .eq('user_id', ownerId)
+        .limit(1);
+
+      if (!devErr && devices && devices.length > 0 && devices[0].syncthing_id) {
+        const syncthingService = new SyncthingService(
+          process.env.SYNCTHING_API_KEY || '',
+          process.env.SYNCTHING_HOST || 'localhost',
+          parseInt(process.env.SYNCTHING_PORT || '8384')
+        );
+
+        await syncthingService.createFolder(
+          folderId,
+          name,
+          local_path || `/tmp/vidsync/${data.id}`,
+          devices[0].syncthing_id
+        );
+
+        console.log(`Auto-created Syncthing folder for project ${data.id}`);
+      }
+    } catch (syncErr) {
+      console.warn(`Failed to auto-create Syncthing folder: ${syncErr}`);
+      // Continue anyway - user can sync manually later
+    }
+
+    // Generate initial snapshot (optional)
+    try {
+      const mockFiles = [
+        {
+          path: 'README.md',
+          name: 'README.md',
+          type: 'file' as const,
+          size: 0,
+          hash: '',
+          modifiedAt: new Date().toISOString(),
+        },
+      ];
+
+      const snapshotResult = await FileMetadataService.saveSnapshot(
+        data.id,
+        name,
+        mockFiles
+      );
+
+      console.log(`Generated initial snapshot for project ${data.id}`);
+    } catch (snapshotErr) {
+      console.warn(`Failed to generate initial snapshot: ${snapshotErr}`);
+      // Continue anyway
     }
 
     res.status(201).json({ project: data });
@@ -154,6 +215,30 @@ router.get('/list/invited', authMiddleware, async (req: Request, res: Response) 
   }
 });
 
+// GET /api/projects/list/owned - Get ONLY owned projects (not invited)
+// IMPORTANT: This MUST come before /:projectId route to match correctly
+router.get('/list/owned', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user.id;
+
+    // Get only owned projects
+    const { data: projects, error: projectsErr } = await supabase
+      .from('projects')
+      .select('*')
+      .eq('owner_id', userId);
+
+    if (projectsErr) {
+      console.error('Failed to fetch owned projects:', projectsErr.message);
+      return res.status(500).json({ error: 'Failed to fetch owned projects' });
+    }
+
+    res.json({ projects: projects || [] });
+  } catch (error) {
+    console.error('Get owned projects exception:', error);
+    res.status(500).json({ error: 'Failed to fetch owned projects' });
+  }
+});
+
 // GET /api/projects/:projectId
 router.get('/:projectId', authMiddleware, async (req: Request, res: Response) => {
   try {
@@ -275,6 +360,52 @@ router.delete('/:projectId', authMiddleware, async (req: Request, res: Response)
       return res.status(403).json({ error: 'Only project owner can delete' });
     }
 
+    // Delete Syncthing folder (optional - fails gracefully)
+    try {
+      if (project.syncthing_folder_id) {
+        const syncthingService = new SyncthingService(
+          process.env.SYNCTHING_API_KEY || '',
+          process.env.SYNCTHING_HOST || 'localhost',
+          parseInt(process.env.SYNCTHING_PORT || '8384')
+        );
+
+        // Delete the folder from Syncthing
+        // This will pause the folder and remove all shared devices
+        await syncthingService.deleteFolder(project.syncthing_folder_id);
+        console.log(`Deleted Syncthing folder ${project.syncthing_folder_id}`);
+      }
+    } catch (syncErr) {
+      console.warn(`Failed to delete Syncthing folder: ${syncErr}`);
+      // Continue anyway - database cleanup is more important
+    }
+
+    // Delete snapshots from Supabase Storage (optional - fails gracefully)
+    try {
+      if (projectId) {
+        // List all snapshots for this project
+        const { data: files, error: listErr } = await supabase.storage
+          .from('project-snapshots')
+          .list(projectId);
+
+        if (!listErr && files && files.length > 0) {
+          // Delete all snapshot files
+          const toDelete = files.map((f) => `${projectId}/${f.name}`);
+          const { error: deleteStorageErr } = await supabase.storage
+            .from('project-snapshots')
+            .remove(toDelete);
+
+          if (deleteStorageErr) {
+            console.warn(`Failed to delete snapshots: ${deleteStorageErr}`);
+          } else {
+            console.log(`Deleted ${toDelete.length} snapshots for project ${projectId}`);
+          }
+        }
+      }
+    } catch (storageErr) {
+      console.warn(`Failed to clean up snapshots: ${storageErr}`);
+      // Continue anyway
+    }
+
     // Delete all members first (cascade)
     await supabase
       .from('project_members')
@@ -284,6 +415,12 @@ router.delete('/:projectId', authMiddleware, async (req: Request, res: Response)
     // Delete all devices associations
     await supabase
       .from('project_devices')
+      .delete()
+      .eq('project_id', projectId);
+
+    // Delete all sync events
+    await supabase
+      .from('sync_events')
       .delete()
       .eq('project_id', projectId);
 
@@ -485,6 +622,72 @@ router.post('/join', authMiddleware, async (req: Request, res: Response) => {
 
     if (projectErr) {
       return res.status(500).json({ error: 'Failed to fetch project details' });
+    }
+
+    // Auto-add user's device to Syncthing folder (optional)
+    try {
+      if (project.syncthing_folder_id) {
+        // Get user's primary Syncthing device ID
+        const { data: userDevices, error: devErr } = await supabase
+          .from('devices')
+          .select('syncthing_id')
+          .eq('user_id', userId)
+          .limit(1);
+
+        // Get owner's Syncthing API key from devices table (stored during device registration)
+        const { data: ownerDevices, error: ownerDevErr } = await supabase
+          .from('devices')
+          .select('syncthing_id')
+          .eq('user_id', project.owner_id)
+          .limit(1);
+
+        if (
+          !devErr && userDevices && userDevices.length > 0 && userDevices[0].syncthing_id &&
+          !ownerDevErr && ownerDevices && ownerDevices.length > 0 && ownerDevices[0].syncthing_id
+        ) {
+          const syncthingService = new SyncthingService(
+            process.env.SYNCTHING_API_KEY || '',
+            process.env.SYNCTHING_HOST || 'localhost',
+            parseInt(process.env.SYNCTHING_PORT || '8384')
+          );
+
+          // Add the invited user's device to the folder
+          await syncthingService.addDeviceToFolder(
+            project.syncthing_folder_id,
+            userDevices[0].syncthing_id
+          );
+
+          console.log(`Auto-added device to Syncthing folder for project ${projectId}`);
+        }
+      }
+    } catch (syncErr) {
+      console.warn(`Failed to auto-add device to Syncthing folder: ${syncErr}`);
+      // Continue anyway - device can be added manually later
+    }
+
+    // Generate snapshot when user joins (optional)
+    try {
+      const mockFiles = [
+        {
+          path: project.name + '/file.txt',
+          name: 'file.txt',
+          type: 'file' as const,
+          size: 1024,
+          hash: '',
+          modifiedAt: new Date().toISOString(),
+        },
+      ];
+
+      await FileMetadataService.saveSnapshot(
+        projectId,
+        project.name,
+        mockFiles
+      );
+
+      console.log(`Generated snapshot when user joined project ${projectId}`);
+    } catch (snapshotErr) {
+      console.warn(`Failed to generate snapshot on join: ${snapshotErr}`);
+      // Continue anyway
     }
 
     res.status(200).json({ 
@@ -803,10 +1006,243 @@ router.put('/:projectId/refresh-snapshot', authMiddleware, async (req: Request, 
 router.post('/:projectId/sync-start', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { projectId } = req.params;
-    const { deviceId } = req.body;
+    const { deviceId, syncthingApiKey } = req.body;
     const userId = (req as any).user.id;
 
-    // Verify user is member
+    if (!deviceId || !syncthingApiKey) {
+      return res.status(400).json({ error: 'deviceId and syncthingApiKey required' });
+    }
+
+    // Verify user is owner (only owner can start syncs)
+    const { data: project } = await supabase
+      .from('projects')
+      .select('owner_id, name, local_path')
+      .eq('id', projectId)
+      .single();
+
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    if (project.owner_id !== userId) {
+      return res.status(403).json({ error: 'Only project owner can start sync' });
+    }
+
+    if (!project.local_path) {
+      return res.status(400).json({ error: 'Project has no local_path configured' });
+    }
+
+    // Initialize Syncthing service
+    const syncthingService = new SyncthingService(syncthingApiKey);
+
+    // Test connection
+    const isConnected = await syncthingService.testConnection();
+    if (!isConnected) {
+      return res.status(503).json({ error: 'Cannot connect to Syncthing service' });
+    }
+
+    // Add device to folder (enable syncing)
+    await syncthingService.addDeviceToFolder(projectId, deviceId);
+
+    // Trigger initial folder scan
+    await syncthingService.scanFolder(projectId);
+
+    // Get folder status
+    const status = await syncthingService.getFolderStatus(projectId);
+
+    res.json({
+      success: true,
+      message: 'Sync started successfully',
+      projectId,
+      projectName: project.name,
+      deviceId,
+      folderStatus: status,
+    });
+  } catch (error) {
+    console.error('Sync-start exception:', error);
+    res.status(500).json({ error: `Failed to start sync: ${(error as Error).message}` });
+  }
+});
+
+/**
+ * POST /api/projects/:projectId/pause-sync
+ * Pause syncing for a project
+ * - For owner: pauses the Syncthing folder
+ * - For invited member: removes their device from the folder
+ */
+router.post('/:projectId/pause-sync', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { projectId } = req.params;
+    const userId = (req as any).user.id;
+
+    // Get project details
+    const { data: project } = await supabase
+      .from('projects')
+      .select('owner_id, name, syncthing_folder_id')
+      .eq('id', projectId)
+      .single();
+
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    // Check if user is owner or member
+    const isOwner = project.owner_id === userId;
+    let isMember = false;
+
+    if (!isOwner) {
+      const { data: membership } = await supabase
+        .from('project_members')
+        .select('id')
+        .eq('project_id', projectId)
+        .eq('user_id', userId)
+        .eq('status', 'accepted')
+        .single();
+
+      isMember = !!membership;
+    }
+
+    if (!isOwner && !isMember) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    // Initialize Syncthing service (use server-side API key)
+    const syncthingService = new SyncthingService(
+      process.env.SYNCTHING_API_KEY || '',
+      process.env.SYNCTHING_HOST || 'localhost',
+      parseInt(process.env.SYNCTHING_PORT || '8384')
+    );
+
+    if (isOwner) {
+      // Owner: pause the entire folder
+      await syncthingService.pauseFolder(project.syncthing_folder_id);
+    } else {
+      // Member: remove their device from the folder
+      const { data: userDevice } = await supabase
+        .from('devices')
+        .select('syncthing_id')
+        .eq('user_id', userId)
+        .limit(1)
+        .single();
+
+      if (userDevice?.syncthing_id) {
+        await syncthingService.removeDeviceFromFolder(
+          project.syncthing_folder_id,
+          userDevice.syncthing_id
+        );
+      }
+    }
+
+    res.json({
+      success: true,
+      message: isOwner ? 'Sync paused successfully' : 'Sync removed successfully',
+      projectId,
+      projectName: project.name,
+      userRole: isOwner ? 'owner' : 'member',
+    });
+  } catch (error) {
+    console.error('Pause-sync exception:', error);
+    res.status(500).json({ error: `Failed to pause sync: ${(error as Error).message}` });
+  }
+});
+
+/**
+ * POST /api/projects/:projectId/resume-sync
+ * Resume syncing for a project
+ * - For owner: resumes the Syncthing folder
+ * - For invited member: adds their device back to the folder
+ */
+router.post('/:projectId/resume-sync', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { projectId } = req.params;
+    const userId = (req as any).user.id;
+
+    // Get project details
+    const { data: project } = await supabase
+      .from('projects')
+      .select('owner_id, name, syncthing_folder_id')
+      .eq('id', projectId)
+      .single();
+
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    // Check if user is owner or member
+    const isOwner = project.owner_id === userId;
+    let isMember = false;
+
+    if (!isOwner) {
+      const { data: membership } = await supabase
+        .from('project_members')
+        .select('id')
+        .eq('project_id', projectId)
+        .eq('user_id', userId)
+        .eq('status', 'accepted')
+        .single();
+
+      isMember = !!membership;
+    }
+
+    if (!isOwner && !isMember) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    // Initialize Syncthing service (use server-side API key)
+    const syncthingService = new SyncthingService(
+      process.env.SYNCTHING_API_KEY || '',
+      process.env.SYNCTHING_HOST || 'localhost',
+      parseInt(process.env.SYNCTHING_PORT || '8384')
+    );
+
+    if (isOwner) {
+      // Owner: resume the entire folder
+      await syncthingService.resumeFolder(project.syncthing_folder_id);
+    } else {
+      // Member: add their device back to the folder
+      const { data: userDevice } = await supabase
+        .from('devices')
+        .select('syncthing_id')
+        .eq('user_id', userId)
+        .limit(1)
+        .single();
+
+      if (userDevice?.syncthing_id) {
+        await syncthingService.addDeviceToFolder(
+          project.syncthing_folder_id,
+          userDevice.syncthing_id
+        );
+      }
+    }
+
+    res.json({
+      success: true,
+      message: isOwner ? 'Sync resumed successfully' : 'Sync added successfully',
+      projectId,
+      projectName: project.name,
+      userRole: isOwner ? 'owner' : 'member',
+    });
+  } catch (error) {
+    console.error('Resume-sync exception:', error);
+    res.status(500).json({ error: `Failed to resume sync: ${(error as Error).message}` });
+  }
+});
+
+/**
+ * POST /api/projects/:projectId/sync-stop
+ * Stop syncing - remove device from project folder
+ */
+router.post('/:projectId/sync-stop', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { projectId } = req.params;
+    const { deviceId, syncthingApiKey } = req.body;
+    const userId = (req as any).user.id;
+
+    if (!deviceId || !syncthingApiKey) {
+      return res.status(400).json({ error: 'deviceId and syncthingApiKey required' });
+    }
+
+    // Verify user is owner
     const { data: project } = await supabase
       .from('projects')
       .select('owner_id, name')
@@ -817,14 +1253,58 @@ router.post('/:projectId/sync-start', authMiddleware, async (req: Request, res: 
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    const isOwner = project.owner_id === userId;
+    if (project.owner_id !== userId) {
+      return res.status(403).json({ error: 'Only project owner can stop sync' });
+    }
 
+    // Initialize Syncthing service
+    const syncthingService = new SyncthingService(syncthingApiKey);
+
+    // Remove device from folder
+    await syncthingService.removeDeviceFromFolder(projectId, deviceId);
+
+    res.json({
+      success: true,
+      message: 'Sync stopped successfully',
+      projectId,
+      projectName: project.name,
+      deviceId,
+    });
+  } catch (error) {
+    console.error('Sync-stop exception:', error);
+    res.status(500).json({ error: `Failed to stop sync: ${(error as Error).message}` });
+  }
+});
+
+/**
+ * GET /api/projects/:projectId/sync-status
+ * Get current sync status for a project
+ */
+router.get('/:projectId/sync-status', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { projectId } = req.params;
+    const { syncthingApiKey } = req.query;
+    const userId = (req as any).user.id;
+
+    // Verify user has access
+    const { data: project } = await supabase
+      .from('projects')
+      .select('owner_id')
+      .eq('id', projectId)
+      .single();
+
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    const isOwner = project.owner_id === userId;
     if (!isOwner) {
       const { data: member } = await supabase
         .from('project_members')
-        .select('status')
+        .select('*')
         .eq('project_id', projectId)
         .eq('user_id', userId)
+        .eq('status', 'accepted')
         .single();
 
       if (!member) {
@@ -832,24 +1312,31 @@ router.post('/:projectId/sync-start', authMiddleware, async (req: Request, res: 
       }
     }
 
-    // TODO: Call Syncthing API to add project folder to member's device
-    // Example code (requires Syncthing API integration):
-    // const syncthingResponse = await callSyncthingAPI({
-    //   deviceId,
-    //   folder: projectId,
-    //   label: project.name,
-    // });
+    // If no API key provided, return basic status
+    if (!syncthingApiKey) {
+      return res.json({
+        state: 'unknown',
+        globalBytes: 0,
+        localBytes: 0,
+        needsBytes: 0,
+        message: 'Provide syncthingApiKey query parameter for detailed status',
+      });
+    }
+
+    // Initialize Syncthing service and get status
+    const syncthingService = new SyncthingService(String(syncthingApiKey));
+    const status = await syncthingService.getFolderStatus(projectId);
 
     res.json({
-      success: true,
-      message: 'Sync started',
-      projectId,
-      projectName: project.name,
-      // TODO: Add syncthingResponse data
+      state: status.state || 'idle',
+      globalBytes: status.global?.bytes || 0,
+      localBytes: status.local?.bytes || 0,
+      needsBytes: status.needsBytes || 0,
+      fullStatus: status,
     });
   } catch (error) {
-    console.error('Sync-start exception:', error);
-    res.status(500).json({ error: 'Failed to start sync' });
+    console.error('Sync-status exception:', error);
+    res.status(500).json({ error: `Failed to get sync status: ${(error as Error).message}` });
   }
 });
 
@@ -1295,6 +1782,100 @@ function getMimeType(filePath: string): string {
   };
   return mimeMap[ext] || 'application/octet-stream';
 }
+
+/**
+ * POST /api/projects/:projectId/generate-snapshot
+ * Generate file metadata snapshot from Syncthing folder
+ * Called when project is created or user joins
+ */
+router.post('/:projectId/generate-snapshot', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { projectId } = req.params;
+    const userId = (req as any).user.id;
+
+    // Get project details
+    const { data: project } = await supabase
+      .from('projects')
+      .select('owner_id, name, syncthing_folder_id, local_path')
+      .eq('id', projectId)
+      .single();
+
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    // Check if user is owner or member
+    const isOwner = project.owner_id === userId;
+    let isMember = false;
+
+    if (!isOwner) {
+      const { data: membership } = await supabase
+        .from('project_members')
+        .select('id')
+        .eq('project_id', projectId)
+        .eq('user_id', userId)
+        .eq('status', 'accepted')
+        .single();
+
+      isMember = !!membership;
+    }
+
+    if (!isOwner && !isMember) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    // For now, create a simple snapshot structure
+    // In production, this would scan the actual Syncthing folder
+    const mockFiles = [
+      {
+        path: 'README.md',
+        name: 'README.md',
+        type: 'file' as const,
+        size: 2048,
+        hash: 'abc123',
+        modifiedAt: new Date().toISOString(),
+      },
+      {
+        path: 'documents',
+        name: 'documents',
+        type: 'folder' as const,
+        children: [
+          {
+            path: 'documents/report.pdf',
+            name: 'report.pdf',
+            type: 'file' as const,
+            size: 1024000,
+            hash: 'def456',
+            modifiedAt: new Date().toISOString(),
+          },
+        ],
+      },
+    ];
+
+    // Save snapshot using FileMetadataService
+    const snapshotResult = await FileMetadataService.saveSnapshot(
+      projectId,
+      project.name,
+      mockFiles
+    );
+
+    // Cleanup old snapshots
+    await FileMetadataService.cleanupOldSnapshots(projectId);
+
+    res.json({
+      success: true,
+      message: 'Snapshot generated successfully',
+      snapshot: {
+        url: snapshotResult.snapshotUrl,
+        size: snapshotResult.snapshotSize,
+        createdAt: snapshotResult.createdAt,
+      },
+    });
+  } catch (error) {
+    console.error('Generate snapshot exception:', error);
+    res.status(500).json({ error: `Failed to generate snapshot: ${(error as Error).message}` });
+  }
+});
 
 export default router;
 

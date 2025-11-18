@@ -17,6 +17,7 @@ import {
 } from '@mui/material';
 import CloudDownloadIcon from '@mui/icons-material/CloudDownload';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import { cloudAPI } from '../hooks/useCloudApi';
 
 interface FileSnapshot {
   file_path: string;
@@ -59,25 +60,10 @@ export const ProjectFilesPage: React.FC<ProjectFilesPageProps> = ({ projectId, i
       setError(null);
       try {
         const offset = page * 500;
-        const token = localStorage.getItem('auth_token');
-
-        const response = await fetch(
-          `http://localhost:3000/projects/${projectId}/files-list?limit=500&offset=${offset}`,
-          {
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json',
-            },
-          }
-        );
-
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-
-        const data = await response.json();
-        setFiles(data.files || []);
-        setPagination(data.pagination);
+        const response = await cloudAPI.get(`/projects/${projectId}/files-list?limit=500&offset=${offset}`);
+        
+        setFiles(response.data.files || []);
+        setPagination(response.data.pagination);
       } catch (err) {
         console.error('Failed to fetch files:', err);
         setError(err instanceof Error ? err.message : 'Failed to fetch files');
@@ -99,21 +85,8 @@ export const ProjectFilesPage: React.FC<ProjectFilesPageProps> = ({ projectId, i
     setRefreshing(true);
     setError(null);
     try {
-      const token = localStorage.getItem('auth_token');
-      const response = await fetch(`http://localhost:3000/projects/${projectId}/refresh-snapshot`, {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      const data = await response.json();
-      console.log('Snapshot refreshed:', data);
+      const response = await cloudAPI.put(`/projects/${projectId}/refresh-snapshot`, {});
+      console.log('Snapshot refreshed:', response.data);
 
       // Refetch files to show updated snapshot
       setPage(0);
@@ -129,22 +102,8 @@ export const ProjectFilesPage: React.FC<ProjectFilesPageProps> = ({ projectId, i
     setSyncing(true);
     setError(null);
     try {
-      const token = localStorage.getItem('auth_token');
-      const response = await fetch(`http://localhost:3000/projects/${projectId}/sync-start`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ deviceId: 'local-device' }), // TODO: Get from Syncthing
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      const data = await response.json();
-      console.log('Sync started:', data);
+      const response = await cloudAPI.post(`/projects/${projectId}/sync-start`, {});
+      console.log('Sync started:', response.data);
       // Show success message or update UI accordingly
     } catch (err) {
       console.error('Failed to start sync:', err);

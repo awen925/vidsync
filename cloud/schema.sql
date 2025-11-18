@@ -44,6 +44,8 @@ CREATE TABLE IF NOT EXISTS projects (
   sync_mode TEXT DEFAULT 'automatic', -- 'automatic', 'manual'
   status TEXT DEFAULT 'idle', -- 'idle', 'syncing', 'paused', 'error'
   last_synced TIMESTAMP WITH TIME ZONE,
+  snapshot_url TEXT, -- URL to gzip-compressed JSON snapshot in Supabase Storage
+  snapshot_updated_at TIMESTAMP WITH TIME ZONE, -- When snapshot was last created
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );

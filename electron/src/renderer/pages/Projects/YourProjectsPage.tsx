@@ -1,13 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
   Box,
-  Paper,
-  List,
-  ListItem,
-  ListItemButton,
-  ListItemText,
-  Typography,
-  Divider,
   Button,
   Dialog,
   DialogTitle,
@@ -15,34 +8,20 @@ import {
   DialogActions,
   TextField,
   Stack,
-  IconButton,
   Menu,
   MenuItem,
-  CircularProgress,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  Tab,
-  Tabs,
   Alert,
+  Typography,
+  Paper,
+  IconButton,
 } from '@mui/material';
-import {
-  Plus,
-  MoreVertical,
-  Trash2,
-  Folder,
-  File,
-  Copy,
-  Check,
-  ArrowLeft,
-  Users,
-  Link as LinkIcon,
-  AlertCircle,
-} from 'lucide-react';
+import { Trash2, LinkIcon, Copy, Check, AlertCircle } from 'lucide-react';
 import { cloudAPI } from '../../hooks/useCloudApi';
+import YourProjectsList from '../../components/Projects/YourProjectsList';
+import YourProjectHeader from '../../components/Projects/YourProjectHeader';
+import YourProjectFilesTab from '../../components/Projects/YourProjectFilesTab';
+import YourProjectSharedTab from '../../components/Projects/YourProjectSharedTab';
+
 
 interface Project {
   id: string;
@@ -93,6 +72,8 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
   const [tabValue, setTabValue] = useState(0);
   const [shareEmail, setShareEmail] = useState('');
   const [shareEmailError, setShareEmailError] = useState('');
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleteConfirmLoading, setDeleteConfirmLoading] = useState(false);
 
   useEffect(() => {
     fetchProjects();
@@ -108,14 +89,20 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
   const fetchProjects = async () => {
     setLoading(true);
     try {
-      const response = await cloudAPI.get('/projects');
-      const projectList = response.data.projects || [];
-      setProjects(projectList);
-      if (projectList.length > 0) {
-        setSelectedProject(projectList[0]);
+      // Fetch ONLY owned projects from new /list/owned endpoint
+      const response = await cloudAPI.get('/projects/list/owned');
+      const projects = response.data.projects || [];
+      
+      setProjects(projects);
+      if (projects.length > 0) {
+        setSelectedProject(projects[0]);
+      } else {
+        setSelectedProject(null);
       }
     } catch (error) {
-      console.error('Failed to fetch projects:', error);
+      console.error('Failed to fetch owned projects:', error);
+      setProjects([]);
+      setSelectedProject(null);
     } finally {
       setLoading(false);
     }
@@ -277,21 +264,22 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
 
   const handleDeleteProject = async () => {
     if (!selectedMenuProject) return;
-    try {
-      // Remove from Syncthing first (non-blocking)
-      try {
-        await (window as any).api.syncthingRemoveProjectFolder(selectedMenuProject.id);
-      } catch (syncError) {
-        console.warn('Failed to remove from Syncthing:', syncError);
-        // Continue anyway - Syncthing cleanup failure shouldn't block project deletion
-      }
+    setDeleteConfirmOpen(true);
+  };
 
-      // Delete from backend
+  const handleConfirmDelete = async () => {
+    if (!selectedMenuProject) return;
+    setDeleteConfirmLoading(true);
+    try {
+      // Delete from backend (backend handles Syncthing folder and snapshots cleanup)
       await cloudAPI.delete(`/projects/${selectedMenuProject.id}`);
       handleMenuClose();
+      setDeleteConfirmOpen(false);
       await fetchProjects();
     } catch (error) {
       console.error('Failed to delete project:', error);
+    } finally {
+      setDeleteConfirmLoading(false);
     }
   };
 
@@ -346,309 +334,50 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
   return (
     <Box sx={{ display: 'flex', height: '100%', bgcolor: 'background.default' }}>
       {/* Left Panel - Project List */}
-      <Paper
-        elevation={0}
-        sx={{
-          width: 300,
-          flexShrink: 0,
-          borderRadius: 1,
-          borderRight: 1,
-          borderColor: 'divider',
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden',
-          bgcolor: 'primary.main',
-        }}
-      >
-        {/* Header */}
-        <Box sx={{ p: 2, borderBottom: 1, borderColor: 'rgba(255, 255, 255, 0.2)' }}>
-          <Stack direction="row" spacing={1} sx={{ mb: 1 }}>
-            <Typography variant="h6" sx={{ fontWeight: 700, flex: 1, color: 'white' }}>Your Projects</Typography>
-            <Button
-              disableRipple
-              size="small"
-              variant="contained"
-              startIcon={<Plus size={16} />}
-              onClick={() => setCreateDialogOpen(true)}
-              sx={{ 
-                textTransform: 'none', 
-                fontWeight: 600,
-                bgcolor: 'rgba(255, 255, 255, 0.2)',
-                color: 'white',
-                '&:hover': {
-                  bgcolor: 'rgba(255, 255, 255, 0.3)',
-                }
-              }}
-            >
-              New
-            </Button>
-          </Stack>
-        </Box>
-
-        {/* Project List */}
-        {loading ? (
-          <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flex: 1 }}>
-            <CircularProgress />
-          </Box>
-        ) : projects.length === 0 ? (
-          <Box sx={{ p: 2, textAlign: 'center', color: 'text.secondary' }}>
-            <Typography variant="body2">No projects yet</Typography>
-          </Box>
-        ) : (
-          <List sx={{ overflow: 'auto', flex: 1, p: 0 }}>
-            {projects.map((project) => (
-              <ListItem
-                key={project.id}
-                disablePadding
-                secondaryAction={
-                  <IconButton
-                    disableRipple
-                    edge="end"
-                    size="small"
-                    onClick={(e) => handleMenuOpen(e, project)}
-                  >
-                    <MoreVertical size={16} />
-                  </IconButton>
-                }
-              >
-                <ListItemButton
-                  disableRipple
-                  selected={selectedProject?.id === project.id}
-                  onClick={() => setSelectedProject(project)}
-                  sx={{
-                    color: 'white',
-                    '&.Mui-selected': {
-                      bgcolor: 'rgba(128, 128, 128, 0.3)',
-                      '& .MuiListItemText-root': {
-                        color: 'white',
-                      },
-                    },
-                    '&:hover': {
-                      bgcolor: 'rgba(255, 255, 255, 0.1)',
-                    },
-                  }}
-                >
-                  <ListItemText
-                    primary={<Typography sx={{ fontWeight: 500, fontSize: '0.95rem', color: 'white' }}>{project.name}</Typography>}
-                    secondary={
-                      <Typography variant="caption" sx={{ color: 'rgba(255, 255, 255, 0.7)' }}>
-                        {project.description}
-                      </Typography>
-                    }
-                  />
-                </ListItemButton>
-              </ListItem>
-            ))}
-          </List>
-        )}
-      </Paper>
+      <YourProjectsList
+        projects={projects}
+        selectedProjectId={selectedProject?.id}
+        loading={loading}
+        onSelectProject={setSelectedProject}
+        onNewClick={() => setCreateDialogOpen(true)}
+        onMenuClick={handleMenuOpen}
+      />
 
       {/* Right Panel - Project Details & File Browser */}
       <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {selectedProject ? (
           <>
             {/* Project Header */}
-            <Paper
-              elevation={0}
-              sx={{
-                p: 2,
-                borderRadius: 1,
-                borderBottom: 1,
-                borderColor: 'divider',
-                bgcolor: 'background.paper',
-              }}
-            >
-              <Stack direction="row" justifyContent="space-between" alignItems="start" sx={{ mb: 2 }}>
-                <Box sx={{ flex: 1 }}>
-                  <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>{selectedProject.name}</Typography>
-                  {selectedProject.description && (
-                    <Typography variant="body2" sx={{ color: 'text.secondary' }}>{selectedProject.description}</Typography>
-                  )}
-                </Box>
-                <IconButton
-                  disableRipple
-                  size="small"
-                  onClick={(e) => handleMenuOpen(e, selectedProject)}
-                >
-                  <MoreVertical size={18} />
-                </IconButton>
-              </Stack>
-
-              {/* Tabs for Files and Shared With */}
-              <Tabs value={tabValue} onChange={(e, val) => setTabValue(val)} sx={{ mb: 1 }}>
-                <Tab label="Files" value={0} />
-                <Tab label="Shared With" value={1} />
-              </Tabs>
-            </Paper>
+            <YourProjectHeader
+              project={selectedProject}
+              tabValue={tabValue}
+              onTabChange={(e, val) => setTabValue(val)}
+              onMenuClick={(e) => handleMenuOpen(e, selectedProject)}
+            />
 
             {/* Tab Content */}
             {tabValue === 0 ? (
-              // FILES TAB
-              <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-                {filesLoading ? (
-                  <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flex: 1 }}>
-                    <CircularProgress />
-                  </Box>
-                ) : (
-                  <>
-                    {/* Breadcrumb Navigation */}
-                    {pathBreadcrumbs.length > 1 && (
-                      <Box sx={{ p: 1.5, borderBottom: 1, borderColor: 'divider', display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <Button
-                          disableRipple
-                          size="small"
-                          startIcon={<ArrowLeft size={16} />}
-                          onClick={handleGoBack}
-                          sx={{ textTransform: 'none' }}
-                        >
-                          Back
-                        </Button>
-                        <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                          {pathBreadcrumbs.slice(1).join(' / ')}
-                        </Typography>
-                      </Box>
-                    )}
-
-                    {/* File Table */}
-                    {currentPath.length === 0 ? (
-                      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flex: 1 }}>
-                        <Typography sx={{ color: 'text.secondary' }}>No files in this folder</Typography>
-                      </Box>
-                    ) : (
-                      <TableContainer sx={{ flex: 1, overflow: 'auto' }}>
-                        <Table size="small" stickyHeader>
-                          <TableHead>
-                            <TableRow sx={{ bgcolor: 'action.hover' }}>
-                              <TableCell sx={{ fontWeight: 700 }}>Name</TableCell>
-                              <TableCell align="right" sx={{ fontWeight: 700, width: 120 }}>Size</TableCell>
-                              <TableCell align="right" sx={{ fontWeight: 700, width: 150 }}>Modified</TableCell>
-                            </TableRow>
-                          </TableHead>
-                          <TableBody>
-                            {currentPath.map((file, index) => (
-                              <TableRow
-                                key={`${file.name}-${index}`}
-                                hover
-                                onClick={() => file.type === 'folder' && handleOpenFolder(file)}
-                                sx={{ cursor: file.type === 'folder' ? 'pointer' : 'default' }}
-                              >
-                                <TableCell sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                  {file.type === 'folder' ? (
-                                    <>
-                                      <Folder size={16} style={{ color: '#0A66C2' }} />
-                                      <Typography sx={{ fontWeight: 500 }}>{file.name}</Typography>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <File size={16} style={{ color: '#666' }} />
-                                      <Typography>{file.name}</Typography>
-                                    </>
-                                  )}
-                                </TableCell>
-                                <TableCell align="right">
-                                  {file.type === 'file' ? formatFileSize(file.size) : '-'}
-                                </TableCell>
-                                <TableCell align="right" sx={{ fontSize: '0.875rem', color: 'text.secondary' }}>
-                                  {file.modified ? new Date(file.modified).toLocaleDateString() : '-'}
-                                </TableCell>
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      </TableContainer>
-                    )}
-                  </>
-                )}
-              </Box>
+              <YourProjectFilesTab
+                currentPath={currentPath}
+                pathBreadcrumbs={pathBreadcrumbs}
+                loading={filesLoading}
+                onOpenFolder={handleOpenFolder}
+                onGoBack={handleGoBack}
+                formatFileSize={formatFileSize}
+              />
             ) : (
-              // SHARED WITH TAB
-              <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'auto', p: 2 }}>
-                {/* Members Table Section */}
-                <Box sx={{ mb: 3 }}>
-                  <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 2 }}>
-                    Project Members
-                  </Typography>
-                  <TableContainer component={Paper} elevation={0} sx={{ mb: 2, border: 1, borderColor: 'divider' }}>
-                    <Table>
-                      <TableHead>
-                        <TableRow sx={{ bgcolor: 'action.hover' }}>
-                          <TableCell>Name</TableCell>
-                          <TableCell>Email</TableCell>
-                          <TableCell>Role</TableCell>
-                          <TableCell align="right">Actions</TableCell>
-                        </TableRow>
-                      </TableHead>
-                      <TableBody>
-                        <TableRow>
-                          <TableCell colSpan={4} sx={{ py: 3, textAlign: 'center', color: 'text.secondary' }}>
-                            No members have joined this project yet. Share an invite code to add collaborators.
-                          </TableCell>
-                        </TableRow>
-                      </TableBody>
-                    </Table>
-                  </TableContainer>
-                </Box>
-
-                <Divider sx={{ my: 2 }} />
-
-                {/* Sharing Options Section */}
-                <Box>
-                  <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 2 }}>
-                    Share This Project
-                  </Typography>
-
-                  <Stack spacing={2}>
-                    <Box sx={{ p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
-                      <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>Generate Invite Code</Typography>
-                      <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>
-                        Create a shareable link to invite others to this project.
-                      </Typography>
-                      <Button
-                        disableRipple
-                        variant="contained"
-                        startIcon={<LinkIcon size={16} />}
-                        onClick={handleGenerateInvite}
-                        fullWidth
-                        sx={{ textTransform: 'none', fontWeight: 600 }}
-                      >
-                        Generate Invite Code
-                      </Button>
-                    </Box>
-
-                    <Box sx={{ p: 2, bgcolor: 'action.hover', borderRadius: 1, opacity: 0.6 }}>
-                      <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>Share by Email (Coming Soon)</Typography>
-                      <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>
-                        Invite specific people by email address.
-                      </Typography>
-                      <Stack spacing={1}>
-                        <TextField
-                          size="small"
-                          placeholder="user@example.com"
-                          value={shareEmail}
-                          onChange={(e) => {
-                            setShareEmail(e.target.value);
-                            setShareEmailError('');
-                          }}
-                          error={!!shareEmailError}
-                          helperText={shareEmailError}
-                          fullWidth
-                          disabled
-                        />
-                        <Button
-                          disableRipple
-                          variant="outlined"
-                          startIcon={<Users size={16} />}
-                          disabled
-                          fullWidth
-                          sx={{ textTransform: 'none' }}
-                        >
-                          Send Invite
-                        </Button>
-                      </Stack>
-                    </Box>
-                  </Stack>
-                </Box>
-              </Box>
+              <YourProjectSharedTab
+                inviteCode={inviteCode}
+                copiedCode={copiedCode}
+                shareEmail={shareEmail}
+                shareEmailError={shareEmailError}
+                onGenerateInvite={handleGenerateInvite}
+                onCopyInvite={handleCopyInvite}
+                onShareEmailChange={(email) => {
+                  setShareEmail(email);
+                  setShareEmailError('');
+                }}
+              />
             )}
           </>
         ) : (
@@ -886,6 +615,36 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
           Delete Project
         </MenuItem>
       </Menu>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteConfirmOpen} onClose={() => setDeleteConfirmOpen(false)}>
+        <DialogTitle>Delete Project?</DialogTitle>
+        <DialogContent>
+          <Typography sx={{ mb: 2 }}>
+            Are you sure you want to delete <strong>{selectedMenuProject?.name}</strong>?
+          </Typography>
+          <Alert severity="warning">
+            ⚠️ This will:
+            <ul style={{ marginTop: 8, marginBottom: 0 }}>
+              <li>Delete the project and all its data</li>
+              <li>Remove the Syncthing folder (if created)</li>
+              <li>Delete all file snapshots</li>
+              <li>Remove access for all invited members</li>
+            </ul>
+          </Alert>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteConfirmOpen(false)}>Cancel</Button>
+          <Button
+            onClick={handleConfirmDelete}
+            color="error"
+            variant="contained"
+            disabled={deleteConfirmLoading}
+          >
+            {deleteConfirmLoading ? 'Deleting...' : 'Delete Project'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };
