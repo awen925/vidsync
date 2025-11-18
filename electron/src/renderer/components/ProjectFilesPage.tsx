@@ -18,6 +18,7 @@ import {
 import CloudDownloadIcon from '@mui/icons-material/CloudDownload';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import { cloudAPI } from '../hooks/useCloudApi';
+import { FileSyncStatus, SyncStatus } from './FileSyncStatus';
 
 interface FileSnapshot {
   file_path: string;
@@ -53,6 +54,11 @@ export const ProjectFilesPage: React.FC<ProjectFilesPageProps> = ({ projectId, i
   const [syncing, setSyncing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
+  // Sync status states
+  const [folderSyncStatus, setFolderSyncStatus] = useState<SyncStatus | null>(null);
+  const [syncStatusLoading, setSyncStatusLoading] = useState(false);
+  const [syncStatusError, setSyncStatusError] = useState<string | null>(null);
+
   // Fetch files when page or projectId changes
   useEffect(() => {
     const fetchFiles = async () => {
@@ -74,6 +80,32 @@ export const ProjectFilesPage: React.FC<ProjectFilesPageProps> = ({ projectId, i
 
     fetchFiles();
   }, [projectId, page]);
+
+  // Poll for sync status every 3 seconds
+  useEffect(() => {
+    const fetchSyncStatus = async () => {
+      setSyncStatusLoading(true);
+      setSyncStatusError(null);
+      try {
+        const response = await cloudAPI.get(`/projects/${projectId}/file-sync-status`);
+        setFolderSyncStatus(response.data);
+      } catch (err) {
+        console.error('Failed to fetch sync status:', err);
+        setSyncStatusError(err instanceof Error ? err.message : 'Failed to fetch sync status');
+        // Don't set loading to false on error, let it show gracefully
+      } finally {
+        setSyncStatusLoading(false);
+      }
+    };
+
+    // Fetch immediately
+    fetchSyncStatus();
+
+    // Then poll every 3 seconds
+    const pollInterval = setInterval(fetchSyncStatus, 3000);
+
+    return () => clearInterval(pollInterval);
+  }, [projectId]);
 
   const handleChangePage = (_event: React.MouseEvent<HTMLButtonElement> | null, newPage: number) => {
     setPage(newPage);
@@ -168,6 +200,14 @@ export const ProjectFilesPage: React.FC<ProjectFilesPageProps> = ({ projectId, i
       {/* Error alert */}
       {error && <Alert severity="error">{error}</Alert>}
 
+      {/* Sync Status Display (Full Mode) */}
+      <FileSyncStatus
+        syncStatus={folderSyncStatus}
+        mode="full"
+        loading={syncStatusLoading}
+        error={syncStatusError}
+      />
+
       {/* Files table */}
       <TableContainer component={Paper} sx={{ borderRadius: 1 }}>
         <Table>
@@ -181,46 +221,71 @@ export const ProjectFilesPage: React.FC<ProjectFilesPageProps> = ({ projectId, i
               <TableCell align="center" sx={{ fontWeight: 'bold', width: '100px' }}>
                 Type
               </TableCell>
+              <TableCell align="center" sx={{ fontWeight: 'bold', width: '120px' }}>
+                Sync Status
+              </TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {files.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={4} align="center" sx={{ padding: '40px' }}>
+                <TableCell colSpan={5} align="center" sx={{ padding: '40px' }}>
                   No files yet
                 </TableCell>
               </TableRow>
             ) : (
-              files.map((file, index) => (
-                <TableRow
-                  key={`${file.file_path}-${index}`}
-                  hover
-                  sx={{
-                    backgroundColor: file.is_directory ? '#fafafa' : undefined,
-                  }}
-                >
-                  <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.9em' }}>
-                    {file.file_path}
-                  </TableCell>
-                  <TableCell align="right">
-                    {file.is_directory ? '—' : formatFileSize(file.size)}
-                  </TableCell>
-                  <TableCell>{formatDate(file.modified_at)}</TableCell>
-                  <TableCell align="center">
-                    <Typography
-                      variant="caption"
-                      sx={{
-                        backgroundColor: file.is_directory ? '#e3f2fd' : '#f3e5f5',
-                        padding: '4px 8px',
-                        borderRadius: '4px',
-                        display: 'inline-block',
-                      }}
-                    >
-                      {file.is_directory ? 'Folder' : 'File'}
-                    </Typography>
-                  </TableCell>
-                </TableRow>
-              ))
+              files.map((file, index) => {
+                // Determine row background color based on sync state
+                let rowBgColor = undefined;
+                if (folderSyncStatus?.state === 'synced') {
+                  rowBgColor = '#e8f5e9'; // Light green
+                } else if (folderSyncStatus?.state === 'syncing') {
+                  rowBgColor = '#fff8e1'; // Light yellow
+                } else if (folderSyncStatus?.state === 'error') {
+                  rowBgColor = '#ffebee'; // Light red
+                } else if (folderSyncStatus?.state === 'paused') {
+                  rowBgColor = '#f5f5f5'; // Light gray
+                }
+
+                return (
+                  <TableRow
+                    key={`${file.file_path}-${index}`}
+                    hover
+                    sx={{
+                      backgroundColor: file.is_directory ? '#fafafa' : rowBgColor,
+                    }}
+                  >
+                    <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.9em' }}>
+                      {file.file_path}
+                    </TableCell>
+                    <TableCell align="right">
+                      {file.is_directory ? '—' : formatFileSize(file.size)}
+                    </TableCell>
+                    <TableCell>{formatDate(file.modified_at)}</TableCell>
+                    <TableCell align="center">
+                      <Typography
+                        variant="caption"
+                        sx={{
+                          backgroundColor: file.is_directory ? '#e3f2fd' : '#f3e5f5',
+                          padding: '4px 8px',
+                          borderRadius: '4px',
+                          display: 'inline-block',
+                        }}
+                      >
+                        {file.is_directory ? 'Folder' : 'File'}
+                      </Typography>
+                    </TableCell>
+                    <TableCell align="center">
+                      <FileSyncStatus
+                        syncStatus={folderSyncStatus}
+                        mode="compact"
+                        loading={syncStatusLoading}
+                        error={syncStatusError}
+                      />
+                    </TableCell>
+                  </TableRow>
+                );
+              })
             )}
           </TableBody>
         </Table>

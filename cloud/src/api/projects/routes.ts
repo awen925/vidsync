@@ -9,6 +9,30 @@ import * as path from 'path';
 
 const router = Router();
 
+// ============================================================================
+// CACHE: Sync status cache with TTL
+// ============================================================================
+const syncStatusCache = new Map<string, {
+  data: any;
+  expiresAt: number;
+}>();
+
+function getCachedSyncStatus(projectId: string): any | null {
+  const cached = syncStatusCache.get(projectId);
+  if (cached && Date.now() < cached.expiresAt) {
+    return cached.data;
+  }
+  syncStatusCache.delete(projectId);
+  return null;
+}
+
+function setCachedSyncStatus(projectId: string, data: any, ttlMs: number = 5000): void {
+  syncStatusCache.set(projectId, {
+    data,
+    expiresAt: Date.now() + ttlMs,
+  });
+}
+
 // POST /api/projects
 router.post('/', authMiddleware, async (req: Request, res: Response) => {
   try {
@@ -946,6 +970,99 @@ router.get('/:projectId/snapshot-metadata', authMiddleware, async (req: Request,
   } catch (error) {
     console.error('Get snapshot-metadata exception:', error);
     res.status(500).json({ error: 'Failed to fetch snapshot metadata' });
+  }
+});
+
+/**
+ * GET /api/projects/:projectId/file-sync-status
+ * Returns current sync status for the project folder
+ * Response is cached for 5 seconds to avoid Syncthing overload
+ * 
+ * For members (invited users only)
+ */
+router.get('/:projectId/file-sync-status', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { projectId } = req.params;
+    const userId = (req as any).user.id;
+
+    // Verify user is project member (owner or invited)
+    const { data: project } = await supabase
+      .from('projects')
+      .select('owner_id, syncthing_folder_id')
+      .eq('id', projectId)
+      .single();
+
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    const isOwner = project.owner_id === userId;
+
+    if (!isOwner) {
+      // Check if invited member with accepted status
+      const { data: member } = await supabase
+        .from('project_members')
+        .select('status')
+        .eq('project_id', projectId)
+        .eq('user_id', userId)
+        .single();
+
+      if (!member || member.status !== 'accepted') {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+    }
+
+    // Check cache first
+    const cached = getCachedSyncStatus(projectId);
+    if (cached) {
+      console.log(`[Cache HIT] Sync status for project ${projectId}`);
+      return res.json(cached);
+    }
+
+    // Query Syncthing API
+    const syncthingService = new SyncthingService(
+      process.env.SYNCTHING_API_KEY || '',
+      process.env.SYNCTHING_HOST || 'localhost',
+      parseInt(process.env.SYNCTHING_PORT || '8384')
+    );
+
+    const folderStatus = await syncthingService.getFolderStatus(project.syncthing_folder_id);
+
+    // Calculate completion percentage
+    const completion = folderStatus.globalBytes > 0
+      ? Math.round((folderStatus.inSyncBytes / folderStatus.globalBytes) * 100)
+      : 100;
+
+    // Determine state
+    let state: 'synced' | 'syncing' | 'paused' | 'error' = 'synced';
+    if (folderStatus.folderState === 'syncing') {
+      state = 'syncing';
+    } else if (folderStatus.folderState === 'stopped' || folderStatus.folderState === 'paused') {
+      state = 'paused';
+    } else if (folderStatus.pullErrors && folderStatus.pullErrors > 0) {
+      state = 'error';
+    }
+
+    const response = {
+      folderState: folderStatus.folderState,
+      state,
+      completion,
+      bytesDownloaded: folderStatus.inSyncBytes || 0,
+      totalBytes: folderStatus.globalBytes || 0,
+      needsBytes: folderStatus.needBytes || 0,
+      filesDownloaded: folderStatus.inSyncFiles || 0,
+      totalFiles: folderStatus.globalFiles || 0,
+      lastUpdate: new Date().toISOString(),
+      pullErrors: folderStatus.pullErrors || 0,
+    };
+
+    // Cache the response for 5 seconds
+    setCachedSyncStatus(projectId, response, 5000);
+
+    res.json(response);
+  } catch (error) {
+    console.error('Get file-sync-status exception:', error);
+    res.status(500).json({ error: `Failed to get sync status: ${(error as Error).message}` });
   }
 });
 
