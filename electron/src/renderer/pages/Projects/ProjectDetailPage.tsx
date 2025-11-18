@@ -4,11 +4,13 @@ import { cloudAPI, withRetry } from '../../hooks/useCloudApi';
 import SetupWizard from '../../components/SetupWizard';
 import ProgressStatus from '../../components/ProgressStatus';
 import SyncStatusPanel from '../../components/SyncStatusPanel';
+import ProjectFilesPage from '../../components/ProjectFilesPage';
 
 interface Project {
   id: string;
   name: string;
   description?: string | null;
+  owner_id?: string;
 }
 
 interface Device {
@@ -623,7 +625,17 @@ const ProjectDetailPage: React.FC = () => {
             {/* Progress Status Component */}
             {projectId && <ProgressStatus projectId={projectId} pollInterval={2000} />}
 
-            <h4 className="font-medium mt-6 mb-3">Files</h4>
+            {/* Phase 1: Syncthing-First File List */}
+            {projectId && (
+              <div style={{ marginTop: 24 }}>
+                <ProjectFilesPage projectId={projectId} isOwner={project && project.owner_id ? true : false} />
+              </div>
+            )}
+
+            {/* Old files section - can be removed in future */}
+            {false && (
+            <div>
+            <h4 className="font-medium mt-6 mb-3">Files (Legacy)</h4>
             <ul>
               {files.map((f) => (
                 <li key={f.name} className="flex items-center py-1">
@@ -642,6 +654,8 @@ const ProjectDetailPage: React.FC = () => {
                 </li>
               ))}
             </ul>
+            </div>
+            )}
           </div>
         </div>
       ) : (

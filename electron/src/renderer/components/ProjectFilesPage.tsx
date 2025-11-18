@@ -1,0 +1,294 @@
+import React, { useState, useEffect } from 'react';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Paper,
+  TablePagination,
+  Button,
+  CircularProgress,
+  Box,
+  Alert,
+  Stack,
+  Typography,
+} from '@mui/material';
+import CloudDownloadIcon from '@mui/icons-material/CloudDownload';
+import RefreshIcon from '@mui/icons-material/Refresh';
+
+interface FileSnapshot {
+  file_path: string;
+  is_directory: boolean;
+  size: number;
+  file_hash: string;
+  modified_at: string;
+}
+
+interface PaginationState {
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+}
+
+interface ProjectFilesPageProps {
+  projectId: string;
+  isOwner?: boolean;
+}
+
+export const ProjectFilesPage: React.FC<ProjectFilesPageProps> = ({ projectId, isOwner = false }) => {
+  const [files, setFiles] = useState<FileSnapshot[]>([]);
+  const [pagination, setPagination] = useState<PaginationState>({
+    total: 0,
+    limit: 500,
+    offset: 0,
+    hasMore: false,
+  });
+  const [page, setPage] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Fetch files when page or projectId changes
+  useEffect(() => {
+    const fetchFiles = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const offset = page * 500;
+        const token = localStorage.getItem('auth_token');
+
+        const response = await fetch(
+          `http://localhost:3000/projects/${projectId}/files-list?limit=500&offset=${offset}`,
+          {
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        setFiles(data.files || []);
+        setPagination(data.pagination);
+      } catch (err) {
+        console.error('Failed to fetch files:', err);
+        setError(err instanceof Error ? err.message : 'Failed to fetch files');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchFiles();
+  }, [projectId, page]);
+
+  const handleChangePage = (_event: React.MouseEvent<HTMLButtonElement> | null, newPage: number) => {
+    setPage(newPage);
+  };
+
+  const handleRefreshSnapshot = async () => {
+    if (!isOwner) return;
+
+    setRefreshing(true);
+    setError(null);
+    try {
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch(`http://localhost:3000/projects/${projectId}/refresh-snapshot`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log('Snapshot refreshed:', data);
+
+      // Refetch files to show updated snapshot
+      setPage(0);
+    } catch (err) {
+      console.error('Failed to refresh snapshot:', err);
+      setError(err instanceof Error ? err.message : 'Failed to refresh snapshot');
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const handleSyncProject = async () => {
+    setSyncing(true);
+    setError(null);
+    try {
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch(`http://localhost:3000/projects/${projectId}/sync-start`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ deviceId: 'local-device' }), // TODO: Get from Syncthing
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log('Sync started:', data);
+      // Show success message or update UI accordingly
+    } catch (err) {
+      console.error('Failed to start sync:', err);
+      setError(err instanceof Error ? err.message : 'Failed to start sync');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const formatFileSize = (bytes: number): string => {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  const formatDate = (dateString: string): string => {
+    return new Date(dateString).toLocaleString();
+  };
+
+  if (loading && files.length === 0) {
+    return (
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
+        <CircularProgress />
+      </Box>
+    );
+  }
+
+  return (
+    <Stack spacing={2}>
+      {/* Header with actions */}
+      <Box display="flex" gap={2} alignItems="center" flexWrap="wrap">
+        <Typography variant="h6" sx={{ flexGrow: 1 }}>
+          Files ({pagination.total})
+        </Typography>
+
+        {isOwner && (
+          <Button
+            variant="outlined"
+            startIcon={<RefreshIcon />}
+            onClick={handleRefreshSnapshot}
+            disabled={refreshing}
+            size="small"
+          >
+            {refreshing ? 'Refreshing...' : 'Refresh Snapshot'}
+          </Button>
+        )}
+
+        <Button
+          variant="contained"
+          startIcon={<CloudDownloadIcon />}
+          onClick={handleSyncProject}
+          disabled={syncing}
+          disableRipple
+          sx={{ borderRadius: 1 }}
+        >
+          {syncing ? 'Syncing...' : 'Sync This Project'}
+        </Button>
+      </Box>
+
+      {/* Error alert */}
+      {error && <Alert severity="error">{error}</Alert>}
+
+      {/* Files table */}
+      <TableContainer component={Paper} sx={{ borderRadius: 1 }}>
+        <Table>
+          <TableHead>
+            <TableRow sx={{ backgroundColor: '#f5f5f5' }}>
+              <TableCell sx={{ fontWeight: 'bold' }}>File Path</TableCell>
+              <TableCell align="right" sx={{ fontWeight: 'bold', width: '120px' }}>
+                Size
+              </TableCell>
+              <TableCell sx={{ fontWeight: 'bold', width: '180px' }}>Modified</TableCell>
+              <TableCell align="center" sx={{ fontWeight: 'bold', width: '100px' }}>
+                Type
+              </TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {files.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={4} align="center" sx={{ padding: '40px' }}>
+                  No files yet
+                </TableCell>
+              </TableRow>
+            ) : (
+              files.map((file, index) => (
+                <TableRow
+                  key={`${file.file_path}-${index}`}
+                  hover
+                  sx={{
+                    backgroundColor: file.is_directory ? '#fafafa' : undefined,
+                  }}
+                >
+                  <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.9em' }}>
+                    {file.file_path}
+                  </TableCell>
+                  <TableCell align="right">
+                    {file.is_directory ? '—' : formatFileSize(file.size)}
+                  </TableCell>
+                  <TableCell>{formatDate(file.modified_at)}</TableCell>
+                  <TableCell align="center">
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        backgroundColor: file.is_directory ? '#e3f2fd' : '#f3e5f5',
+                        padding: '4px 8px',
+                        borderRadius: '4px',
+                        display: 'inline-block',
+                      }}
+                    >
+                      {file.is_directory ? 'Folder' : 'File'}
+                    </Typography>
+                  </TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </TableContainer>
+
+      {/* Pagination */}
+      {files.length > 0 && (
+        <Box display="flex" justifyContent="space-between" alignItems="center">
+          <Typography variant="body2" color="textSecondary">
+            Showing {files.length} of {pagination.total} files
+          </Typography>
+          <TablePagination
+            component="div"
+            count={pagination.total}
+            page={page}
+            onPageChange={handleChangePage}
+            rowsPerPage={500}
+            rowsPerPageOptions={[500]}
+            sx={{ marginLeft: 'auto' }}
+          />
+        </Box>
+      )}
+
+      {/* Loading indicator for pagination */}
+      {loading && <CircularProgress size={24} sx={{ margin: '0 auto' }} />}
+    </Stack>
+  );
+};
+
+export default ProjectFilesPage;

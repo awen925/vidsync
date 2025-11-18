@@ -611,7 +611,252 @@ router.get('/:projectId/sync-events', authMiddleware, async (req: Request, res: 
   }
 });
 
-// GET /api/projects/:projectId/files - Get file tree from local path
+// ================== PHASE 1: SYNCTHING-FIRST ENDPOINTS ==================
+
+/**
+ * GET /api/projects/:projectId/files-list
+ * Paginated file list from project_file_snapshots
+ * For invitees/members to browse files
+ */
+router.get('/:projectId/files-list', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { projectId } = req.params;
+    const { limit = '500', offset = '0' } = req.query;
+    const userId = (req as any).user.id;
+
+    // Verify user is member (owner or accepted invite)
+    const { data: project } = await supabase
+      .from('projects')
+      .select('owner_id')
+      .eq('id', projectId)
+      .single();
+
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    const isOwner = project.owner_id === userId;
+
+    if (!isOwner) {
+      const { data: member } = await supabase
+        .from('project_members')
+        .select('status')
+        .eq('project_id', projectId)
+        .eq('user_id', userId)
+        .single();
+
+      if (!member) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+    }
+
+    const pageLimit = Math.min(1000, Math.max(10, parseInt(String(limit), 10) || 500));
+    const pageOffset = Math.max(0, parseInt(String(offset), 10) || 0);
+
+    // Get total count
+    const { count } = await supabase
+      .from('project_file_snapshots')
+      .select('*', { count: 'exact', head: true })
+      .eq('project_id', projectId);
+
+    const total = count || 0;
+
+    // Get paginated files
+    const { data: files, error } = await supabase
+      .from('project_file_snapshots')
+      .select('file_path, is_directory, size, file_hash, modified_at')
+      .eq('project_id', projectId)
+      .order('file_path', { ascending: true })
+      .range(pageOffset, pageOffset + pageLimit - 1);
+
+    if (error) {
+      console.error('Failed to fetch files:', error.message);
+      return res.status(500).json({ error: 'Failed to fetch files' });
+    }
+
+    res.json({
+      files: files || [],
+      pagination: {
+        total,
+        limit: pageLimit,
+        offset: pageOffset,
+        hasMore: pageOffset + pageLimit < total,
+      },
+    });
+  } catch (error) {
+    console.error('Get files-list exception:', error);
+    res.status(500).json({ error: 'Failed to fetch files' });
+  }
+});
+
+/**
+ * GET /api/projects/:projectId/snapshot-metadata
+ * Returns current snapshot version + metadata
+ */
+router.get('/:projectId/snapshot-metadata', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { projectId } = req.params;
+    const userId = (req as any).user.id;
+
+    // Verify user is member (owner or accepted invite)
+    const { data: project } = await supabase
+      .from('projects')
+      .select('owner_id')
+      .eq('id', projectId)
+      .single();
+
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    const isOwner = project.owner_id === userId;
+
+    if (!isOwner) {
+      const { data: member } = await supabase
+        .from('project_members')
+        .select('status')
+        .eq('project_id', projectId)
+        .eq('user_id', userId)
+        .single();
+
+      if (!member) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+    }
+
+    // Get snapshot metadata
+    const { data: snapshot, error } = await supabase
+      .from('project_sync_state')
+      .select('snapshot_version, last_snapshot_at, total_files, total_size, root_hash')
+      .eq('project_id', projectId)
+      .single();
+
+    if (error) {
+      return res.status(404).json({ error: 'Snapshot not found' });
+    }
+
+    res.json(snapshot);
+  } catch (error) {
+    console.error('Get snapshot-metadata exception:', error);
+    res.status(500).json({ error: 'Failed to fetch snapshot metadata' });
+  }
+});
+
+/**
+ * PUT /api/projects/:projectId/refresh-snapshot
+ * Force refresh of file snapshot from owner's device
+ * Owner only
+ */
+router.put('/:projectId/refresh-snapshot', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { projectId } = req.params;
+    const userId = (req as any).user.id;
+
+    // Verify user is owner
+    const { data: project } = await supabase
+      .from('projects')
+      .select('owner_id, local_path')
+      .eq('id', projectId)
+      .single();
+
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    if (project.owner_id !== userId) {
+      return res.status(403).json({ error: 'Only owner can refresh snapshot' });
+    }
+
+    // TODO: Scan project folder and update snapshots
+    // For now, just update the timestamp and increment version
+    const { data: currentState } = await supabase
+      .from('project_sync_state')
+      .select('snapshot_version')
+      .eq('project_id', projectId)
+      .single();
+
+    const newVersion = (currentState?.snapshot_version || 0) + 1;
+
+    const { error: updateErr } = await supabase
+      .from('project_sync_state')
+      .update({
+        snapshot_version: newVersion,
+        last_snapshot_at: new Date().toISOString(),
+      })
+      .eq('project_id', projectId);
+
+    if (updateErr) {
+      return res.status(500).json({ error: updateErr.message });
+    }
+
+    res.json({ success: true, message: 'Snapshot refresh triggered', snapshot_version: newVersion });
+  } catch (error) {
+    console.error('Refresh snapshot exception:', error);
+    res.status(500).json({ error: 'Failed to refresh snapshot' });
+  }
+});
+
+/**
+ * POST /api/projects/:projectId/sync-start
+ * Trigger Syncthing to start syncing to member's device
+ */
+router.post('/:projectId/sync-start', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { projectId } = req.params;
+    const { deviceId } = req.body;
+    const userId = (req as any).user.id;
+
+    // Verify user is member
+    const { data: project } = await supabase
+      .from('projects')
+      .select('owner_id, name')
+      .eq('id', projectId)
+      .single();
+
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    const isOwner = project.owner_id === userId;
+
+    if (!isOwner) {
+      const { data: member } = await supabase
+        .from('project_members')
+        .select('status')
+        .eq('project_id', projectId)
+        .eq('user_id', userId)
+        .single();
+
+      if (!member) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+    }
+
+    // TODO: Call Syncthing API to add project folder to member's device
+    // Example code (requires Syncthing API integration):
+    // const syncthingResponse = await callSyncthingAPI({
+    //   deviceId,
+    //   folder: projectId,
+    //   label: project.name,
+    // });
+
+    res.json({
+      success: true,
+      message: 'Sync started',
+      projectId,
+      projectName: project.name,
+      // TODO: Add syncthingResponse data
+    });
+  } catch (error) {
+    console.error('Sync-start exception:', error);
+    res.status(500).json({ error: 'Failed to start sync' });
+  }
+});
+
+// ================== END PHASE 1 ENDPOINTS ==================
+
+// GET /api/projects/:projectId/files - Get file tree from local path (OWNER ONLY)
+// For members, use /files-list instead
 router.get('/:projectId/files', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { projectId } = req.params;
@@ -630,9 +875,13 @@ router.get('/:projectId/files', authMiddleware, async (req: Request, res: Respon
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    // Check access: owner only (can't browse invited projects this way)
+    // Check access: owner only (this endpoint is for local file system browsing)
+    // Members should use /files-paginated instead (remote files with pagination)
     if (project.owner_id !== userId) {
-      return res.status(403).json({ error: 'Access denied - only project owner can browse files' });
+      return res.status(403).json({ 
+        error: 'Access denied - only project owner can browse local files',
+        note: 'Members should use /files-paginated endpoint to view shared files'
+      });
     }
 
     if (!project.local_path) {
