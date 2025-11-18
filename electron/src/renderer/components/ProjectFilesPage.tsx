@@ -83,8 +83,14 @@ export const ProjectFilesPage: React.FC<ProjectFilesPageProps> = ({ projectId, i
 
   // Poll for sync status every 5 seconds (matches backend cache TTL)
   useEffect(() => {
+    let isFirstFetch = true;
+
     const fetchSyncStatus = async () => {
-      setSyncStatusLoading(true);
+      // Only show loading on first fetch, not during polling
+      if (isFirstFetch) {
+        setSyncStatusLoading(true);
+        isFirstFetch = false;
+      }
       setSyncStatusError(null);
       try {
         const response = await cloudAPI.get(`/projects/${projectId}/file-sync-status`);
@@ -98,9 +104,11 @@ export const ProjectFilesPage: React.FC<ProjectFilesPageProps> = ({ projectId, i
       } catch (err) {
         console.error('Failed to fetch sync status:', err);
         setSyncStatusError(err instanceof Error ? err.message : 'Failed to fetch sync status');
-        // Don't set loading to false on error, let it show gracefully
       } finally {
-        setSyncStatusLoading(false);
+        // Always clear loading state after first fetch
+        if (!isFirstFetch) {
+          setSyncStatusLoading(false);
+        }
       }
     };
 

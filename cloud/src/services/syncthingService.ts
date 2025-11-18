@@ -75,20 +75,36 @@ export class SyncthingService {
         });
 
         res.on('end', () => {
-          // Extract CSRF token from response headers if present
+          // Extract CSRF token from response headers
           let csrfToken = res.headers['x-csrf-token'] as string;
           
+          if (!csrfToken) {
+            // Try to extract from Set-Cookie header (Syncthing format: CSRF-Token-{DEVICE_ID}=token_value)
+            const setCookie = res.headers['set-cookie'];
+            if (setCookie && Array.isArray(setCookie)) {
+              for (const cookie of setCookie) {
+                // Format: CSRF-Token-XXXXX=tokenvalue; Path=/; Secure; HttpOnly; SameSite=Lax
+                const match = cookie.match(/CSRF-Token-[^=]+=([^;]+)/);
+                if (match) {
+                  csrfToken = match[1];
+                  console.log(`[SyncthingService] Extracted CSRF token from Set-Cookie header: ${csrfToken.substring(0, 8)}...`);
+                  break;
+                }
+              }
+            }
+          }
+          
           if (!csrfToken && data) {
-            console.log(`[SyncthingService] Response body:`, data.substring(0, 200));
-            // Try to extract from HTML if it's a web page
+            // Fallback: try to extract from HTML response body
             const match = data.match(/csrfToken["'\s]*[:=]\s*["']([^"']+)["']/);
             if (match) {
               csrfToken = match[1];
+              console.log(`[SyncthingService] Extracted CSRF token from HTML: ${csrfToken.substring(0, 8)}...`);
             }
           }
           
           if (csrfToken) {
-            console.log(`[SyncthingService] Found CSRF token: ${csrfToken.substring(0, 8)}...`);
+            console.log(`[SyncthingService] CSRF token obtained: ${csrfToken.substring(0, 8)}...`);
             this.csrfToken = csrfToken;
             resolve(csrfToken);
           } else {

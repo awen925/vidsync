@@ -88,30 +88,64 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
       // Continue anyway - user can sync manually later
     }
 
-    // Generate initial snapshot (optional)
-    try {
-      const mockFiles = [
-        {
-          path: 'README.md',
-          name: 'README.md',
-          type: 'file' as const,
-          size: 0,
+    // Generate initial snapshot ASYNCHRONOUSLY (don't block response)
+    // This runs in background and updates the snapshot when ready
+    (async () => {
+      try {
+        console.log(`[Background] Starting file list generation for project ${data.id}`);
+        
+        // Wait a bit for Syncthing to be ready
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        // Get the syncthing config with API key from local config file
+        let syncConfig: any;
+        try {
+          syncConfig = getSyncthingConfig();
+        } catch (err) {
+          console.warn(`[Background] Failed to get Syncthing config: ${err}`);
+          return;
+        }
+
+        // Initialize SyncthingService with config
+        const service = new SyncthingService(
+          syncConfig.apiKey,
+          syncConfig.host,
+          syncConfig.port
+        );
+        
+        // Get real files from Syncthing
+        const files = await service.getFolderFiles(data.id, 5);
+        console.log(`[Background] Retrieved ${files.length} files for project ${data.id}`);
+        
+        // Convert Syncthing format to snapshot format
+        const snapshotFiles: Array<{
+          path: string;
+          name: string;
+          type: 'file' | 'folder';
+          size: number;
+          hash: string;
+          modifiedAt: string;
+        }> = files.map(f => ({
+          path: f.path,
+          name: f.name,
+          type: f.type === 'file' ? 'file' : 'folder',
+          size: f.size,
           hash: '',
-          modifiedAt: new Date().toISOString(),
-        },
-      ];
+          modifiedAt: f.modTime,
+        }));
 
-      const snapshotResult = await FileMetadataService.saveSnapshot(
-        data.id,
-        name,
-        mockFiles
-      );
+        // Save snapshot
+        await FileMetadataService.saveSnapshot(
+          data.id,
+          name,
+          snapshotFiles
+        );
 
-      console.log(`Generated initial snapshot for project ${data.id}`);
-    } catch (snapshotErr) {
-      console.warn(`Failed to generate initial snapshot: ${snapshotErr}`);
-      // Continue anyway
-    }
+        console.log(`[Background] Saved initial snapshot for project ${data.id} (${snapshotFiles.length} items)`);
+      } catch (snapshotErr) {
+        console.error(`[Background] Failed to generate initial snapshot: ${snapshotErr}`);
+      }
+    })();
 
     res.status(201).json({ project: data });
   } catch (error) {
@@ -388,18 +422,16 @@ router.delete('/:projectId', authMiddleware, async (req: Request, res: Response)
 
     // Delete Syncthing folder (optional - fails gracefully)
     try {
-      if (project.syncthing_folder_id) {
-        const syncthingService = new SyncthingService(
-          process.env.SYNCTHING_API_KEY || '',
-          process.env.SYNCTHING_HOST || 'localhost',
-          parseInt(process.env.SYNCTHING_PORT || '8384')
-        );
+      // Use project UUID as folder ID (new standard)
+      const syncthingService = new SyncthingService(
+        process.env.SYNCTHING_API_KEY || '',
+        process.env.SYNCTHING_HOST || 'localhost',
+        parseInt(process.env.SYNCTHING_PORT || '8384')
+      );
 
-        // Delete the folder from Syncthing
-        // This will pause the folder and remove all shared devices
-        await syncthingService.deleteFolder(project.syncthing_folder_id);
-        console.log(`Deleted Syncthing folder ${project.syncthing_folder_id}`);
-      }
+      // Delete the folder from Syncthing using project UUID
+      await syncthingService.deleteFolder(projectId);
+      console.log(`Deleted Syncthing folder ${projectId}`);
     } catch (syncErr) {
       console.warn(`Failed to delete Syncthing folder: ${syncErr}`);
       // Continue anyway - database cleanup is more important
@@ -691,30 +723,63 @@ router.post('/join', authMiddleware, async (req: Request, res: Response) => {
       // Continue anyway - device can be added manually later
     }
 
-    // Generate snapshot when user joins (optional)
-    try {
-      const mockFiles = [
-        {
-          path: project.name + '/file.txt',
-          name: 'file.txt',
-          type: 'file' as const,
-          size: 1024,
+    // Generate snapshot when user joins (optional) - ASYNCHRONOUSLY
+    (async () => {
+      try {
+        console.log(`[Background] Generating file list for project ${projectId} (user joined)`);
+        
+        // Wait a bit for Syncthing to be ready
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        // Get the syncthing config with API key from local config file
+        let syncConfig: any;
+        try {
+          syncConfig = getSyncthingConfig();
+        } catch (err) {
+          console.warn(`[Background] Failed to get Syncthing config for join: ${err}`);
+          return;
+        }
+
+        // Initialize SyncthingService with config
+        const service = new SyncthingService(
+          syncConfig.apiKey,
+          syncConfig.host,
+          syncConfig.port
+        );
+        
+        // Get real files from Syncthing using project UUID as folder ID
+        const files = await service.getFolderFiles(projectId, 5);
+        console.log(`[Background] Retrieved ${files.length} files for joined project ${projectId}`);
+        
+        // Convert Syncthing format to snapshot format
+        const snapshotFiles: Array<{
+          path: string;
+          name: string;
+          type: 'file' | 'folder';
+          size: number;
+          hash: string;
+          modifiedAt: string;
+        }> = files.map(f => ({
+          path: f.path,
+          name: f.name,
+          type: f.type === 'file' ? 'file' : 'folder',
+          size: f.size,
           hash: '',
-          modifiedAt: new Date().toISOString(),
-        },
-      ];
+          modifiedAt: f.modTime,
+        }));
 
-      await FileMetadataService.saveSnapshot(
-        projectId,
-        project.name,
-        mockFiles
-      );
+        // Save snapshot
+        await FileMetadataService.saveSnapshot(
+          projectId,
+          project.name,
+          snapshotFiles
+        );
 
-      console.log(`Generated snapshot when user joined project ${projectId}`);
-    } catch (snapshotErr) {
-      console.warn(`Failed to generate snapshot on join: ${snapshotErr}`);
-      // Continue anyway
-    }
+        console.log(`[Background] Saved snapshot for joined project ${projectId} (${snapshotFiles.length} items)`);
+      } catch (snapshotErr) {
+        console.error(`[Background] Failed to generate snapshot on join: ${snapshotErr}`);
+      }
+    })();
 
     res.status(200).json({ 
       message: 'Successfully joined project',
@@ -844,7 +909,7 @@ router.get('/:projectId/sync-events', authMiddleware, async (req: Request, res: 
 
 /**
  * GET /api/projects/:projectId/files-list
- * Paginated file list from project_file_snapshots
+ * Paginated file list from latest snapshot stored in Supabase Storage
  * For invitees/members to browse files
  */
 router.get('/:projectId/files-list', authMiddleware, async (req: Request, res: Response) => {
@@ -856,7 +921,7 @@ router.get('/:projectId/files-list', authMiddleware, async (req: Request, res: R
     // Verify user is member (owner or accepted invite)
     const { data: project } = await supabase
       .from('projects')
-      .select('owner_id')
+      .select('owner_id, snapshot_url')
       .eq('id', projectId)
       .single();
 
@@ -882,34 +947,34 @@ router.get('/:projectId/files-list', authMiddleware, async (req: Request, res: R
     const pageLimit = Math.min(1000, Math.max(10, parseInt(String(limit), 10) || 500));
     const pageOffset = Math.max(0, parseInt(String(offset), 10) || 0);
 
-    // Get total count
-    const { count } = await supabase
-      .from('project_file_snapshots')
-      .select('*', { count: 'exact', head: true })
-      .eq('project_id', projectId);
-
-    const total = count || 0;
-
-    // Get paginated files
-    const { data: files, error } = await supabase
-      .from('project_file_snapshots')
-      .select('file_path, is_directory, size, file_hash, modified_at')
-      .eq('project_id', projectId)
-      .order('file_path', { ascending: true })
-      .range(pageOffset, pageOffset + pageLimit - 1);
-
-    if (error) {
-      console.error('Failed to fetch files:', error.message);
-      return res.status(500).json({ error: 'Failed to fetch files' });
+    // Load snapshot from storage if available
+    let allFiles: any[] = [];
+    if (project.snapshot_url) {
+      try {
+        const snapshot = await FileMetadataService.loadSnapshot(project.snapshot_url);
+        allFiles = flattenFileTree(snapshot.files || []);
+      } catch (err) {
+        console.warn('Failed to load snapshot:', err);
+        // Continue with empty file list
+      }
     }
 
+    // Apply pagination to flattened file list
+    const paginatedFiles = allFiles.slice(pageOffset, pageOffset + pageLimit);
+
     res.json({
-      files: files || [],
+      files: paginatedFiles.map(f => ({
+        file_path: f.path,
+        is_directory: f.type === 'folder',
+        size: f.size || 0,
+        file_hash: f.hash || '',
+        modified_at: f.modifiedAt,
+      })),
       pagination: {
-        total,
+        total: allFiles.length,
         limit: pageLimit,
         offset: pageOffset,
-        hasMore: pageOffset + pageLimit < total,
+        hasMore: pageOffset + pageLimit < allFiles.length,
       },
     });
   } catch (error) {
@@ -917,6 +982,23 @@ router.get('/:projectId/files-list', authMiddleware, async (req: Request, res: R
     res.status(500).json({ error: 'Failed to fetch files' });
   }
 });
+
+// Helper function to flatten file tree for pagination
+function flattenFileTree(files: any[]): any[] {
+  const result: any[] = [];
+  
+  function traverse(items: any[]) {
+    for (const item of items) {
+      result.push(item);
+      if (item.children && Array.isArray(item.children)) {
+        traverse(item.children);
+      }
+    }
+  }
+  
+  traverse(files);
+  return result;
+}
 
 /**
  * GET /api/projects/:projectId/snapshot-metadata
