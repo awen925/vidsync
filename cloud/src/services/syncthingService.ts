@@ -214,6 +214,137 @@ export class SyncthingService {
     }
   }
 
+  // Get list of files in a folder with their sync status
+  async getFolderFiles(
+    folderId: string,
+    levels: number = 5
+  ): Promise<Array<{
+    path: string;
+    name: string;
+    type: 'file' | 'dir';
+    size: number;
+    modTime: string;
+    syncStatus: 'synced' | 'syncing' | 'pending' | 'error';
+  }>> {
+    try {
+      // Query Syncthing browse API to get file tree
+      const browseData = await this.makeRequest(
+        `/rest/db/browse?folder=${folderId}&levels=${levels}&prefix=`
+      );
+
+      // Also get folder status to determine sync state
+      const folderStatus = await this.getFolderStatus(folderId);
+
+      const files: Array<{
+        path: string;
+        name: string;
+        type: 'file' | 'dir';
+        size: number;
+        modTime: string;
+        syncStatus: 'synced' | 'syncing' | 'pending' | 'error';
+      }> = [];
+
+      // Recursively flatten the file tree
+      const flatten = (items: any[], prefix: string = ''): void => {
+        if (!items) return;
+
+        for (const item of items) {
+          const path = prefix ? `${prefix}/${item.name}` : item.name;
+
+          // Determine sync status based on folder-level sync state
+          let syncStatus: 'synced' | 'syncing' | 'pending' | 'error' = 'synced';
+
+          // If folder is actively syncing and has pending files, assume files are syncing
+          if (folderStatus.needFiles > 0 || folderStatus.needBytes > 0) {
+            if (folderStatus.inSyncFiles > 0) {
+              syncStatus = 'syncing';
+            } else {
+              syncStatus = 'pending';
+            }
+          }
+
+          // Check for errors
+          if ((folderStatus.pullErrors && folderStatus.pullErrors > 0) || folderStatus.invalid) {
+            syncStatus = 'error';
+          }
+
+          files.push({
+            path,
+            name: item.name,
+            type: item.type === 'file' ? 'file' : 'dir',
+            size: item.size || 0,
+            modTime: new Date().toISOString(), // Syncthing browse API doesn't include modification time
+            syncStatus,
+          });
+
+          // Recursively process children
+          if (item.children && item.type === 'dir') {
+            flatten(item.children, path);
+          }
+        }
+      };
+
+      // Flatten the root children
+      flatten(browseData.children);
+
+      return files;
+    } catch (error) {
+      console.error(`Failed to get folder files for ${folderId}:`, error);
+      throw error;
+    }
+  }
+
+  // Get detailed sync status for a specific file
+  async getFileSyncStatus(
+    folderId: string,
+    filePath: string
+  ): Promise<{
+    state: 'synced' | 'syncing' | 'pending' | 'error';
+    percentComplete: number;
+    bytesDownloaded: number;
+    totalBytes: number;
+    lastError?: string;
+  }> {
+    try {
+      // Query folder status
+      const folderStatus = await this.getFolderStatus(folderId);
+
+      // Determine sync state for this file
+      let state: 'synced' | 'syncing' | 'pending' | 'error' = 'synced';
+      let percentComplete = 100;
+
+      if (folderStatus.needFiles > 0 || folderStatus.needBytes > 0) {
+        if (folderStatus.inSyncFiles > 0) {
+          state = 'syncing';
+          // Calculate per-file progress (rough estimate)
+          percentComplete =
+            folderStatus.globalBytes > 0
+              ? Math.round((folderStatus.inSyncBytes / folderStatus.globalBytes) * 100)
+              : 0;
+        } else {
+          state = 'pending';
+          percentComplete = 0;
+        }
+      }
+
+      // Check for errors
+      if ((folderStatus.pullErrors && folderStatus.pullErrors > 0) || folderStatus.invalid) {
+        state = 'error';
+      }
+
+      return {
+        state,
+        percentComplete,
+        bytesDownloaded: folderStatus.inSyncBytes || 0,
+        totalBytes: folderStatus.globalBytes || 0,
+        lastError: folderStatus.invalid || undefined,
+      };
+    } catch (error) {
+      console.error(`Failed to get file sync status for ${filePath}:`, error);
+      throw error;
+    }
+  }
+
   // Trigger folder scan
   async scanFolder(folderId: string, subfolder: string = ''): Promise<void> {
     try {
