@@ -19,12 +19,14 @@ import {
   Stack,
   Alert,
   InputAdornment,
+  CircularProgress,
 } from '@mui/material';
 import { Settings, Bell, Sliders, Check, Folder } from 'lucide-react';
 import { useAppTheme } from '../../theme/AppThemeProvider';
 import { cloudAPI } from '../../hooks/useCloudApi';
+import { supabase } from '../../lib/supabaseClient';
 
-type SettingsTab = 'general' | 'preferences' | 'notifications';
+type SettingsTab = 'general' | 'preferences' | 'notifications' | 'devices';
 
 interface NotificationSettings {
   projectUpdates: boolean;
@@ -67,6 +69,11 @@ const SettingsPage: React.FC = () => {
     downloadThreads: 4,
   });
 
+  const [devices, setDevices] = useState<any[]>([]);
+  const [devicesLoading, setDevicesLoading] = useState(false);
+  const [syncthingId, setSyncthingId] = useState<string | null>(null);
+  const [updatingSyncthingId, setUpdatingSyncthingId] = useState(false);
+
   useEffect(() => {
     setPreferences(prev => ({
       ...prev,
@@ -89,6 +96,52 @@ const SettingsPage: React.FC = () => {
     };
 
     fetchSettings();
+  }, []);
+
+  // Load devices from backend
+  useEffect(() => {
+    const fetchDevices = async () => {
+      setDevicesLoading(true);
+      try {
+        const { data: session } = await supabase.auth.getSession();
+        if (!session?.session?.access_token) {
+          console.error('No access token available');
+          return;
+        }
+
+        const result = await (window as any).api?.deviceList({
+          accessToken: session.session.access_token,
+        });
+
+        if (result?.ok) {
+          setDevices(result.devices || []);
+        } else {
+          console.error('Failed to fetch devices:', result?.error);
+        }
+      } catch (error) {
+        console.error('Failed to fetch devices:', error);
+      } finally {
+        setDevicesLoading(false);
+      }
+    };
+
+    fetchDevices();
+  }, []);
+
+  // Get local Syncthing device ID
+  useEffect(() => {
+    const getSyncthingDeviceId = async () => {
+      try {
+        const result = await (window as any).api?.syncthingGetDeviceId('__app_shared__');
+        if (result?.ok && result?.id) {
+          setSyncthingId(result.id);
+        }
+      } catch (error) {
+        console.error('Failed to get Syncthing device ID:', error);
+      }
+    };
+
+    getSyncthingDeviceId();
   }, []);
 
   const [language, setLanguage] = useState('en');
@@ -134,6 +187,68 @@ const SettingsPage: React.FC = () => {
       console.error('Failed to save download path:', error);
     } finally {
       setDownloadPathSaving(false);
+    }
+  };
+
+  const handleUpdateSyncthingId = async () => {
+    if (!syncthingId) {
+      console.warn('No Syncthing device ID available');
+      return;
+    }
+
+    setUpdatingSyncthingId(true);
+    try {
+      const { data: session } = await supabase.auth.getSession();
+      if (!session?.session?.access_token) {
+        console.error('No access token available');
+        return;
+      }
+
+      // Get current device info (we need the deviceId to update)
+      const listResult = await (window as any).api?.deviceList({
+        accessToken: session.session.access_token,
+      });
+
+      if (!listResult?.ok) {
+        console.error('Failed to list devices:', listResult?.error);
+        return;
+      }
+
+      const currentDevices = listResult.devices || [];
+      // Find the current device (first Electron app)
+      const currentDevice = currentDevices.find((d: any) => d.platform === 'electron');
+      
+      if (currentDevice) {
+        // Update the device with the Syncthing ID via IPC
+        const updateResult = await (window as any).api?.deviceRegister({
+          deviceId: currentDevice.device_id,
+          deviceName: currentDevice.device_name,
+          platform: currentDevice.platform,
+          syncthingId: syncthingId,
+          nebulaIp: currentDevice.nebula_ip,
+          accessToken: session.session.access_token,
+        });
+
+        if (updateResult?.ok) {
+          console.log('[SETTINGS] Updated device with Syncthing ID:', syncthingId);
+          setSaved(true);
+          setTimeout(() => setSaved(false), 2000);
+          
+          // Refresh devices list
+          const refreshResult = await (window as any).api?.deviceList({
+            accessToken: session.session.access_token,
+          });
+          if (refreshResult?.ok) {
+            setDevices(refreshResult.devices || []);
+          }
+        } else {
+          console.error('Failed to update Syncthing ID:', updateResult?.error);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to update Syncthing ID:', error);
+    } finally {
+      setUpdatingSyncthingId(false);
     }
   };
 
@@ -188,6 +303,7 @@ const SettingsPage: React.FC = () => {
               <Tab label="General" value="general" icon={<Settings size={20} />} iconPosition="start" />
               <Tab label="Preferences" value="preferences" icon={<Sliders size={20} />} iconPosition="start" />
               <Tab label="Notifications" value="notifications" icon={<Bell size={20} />} iconPosition="start" />
+              <Tab label="Devices" value="devices" icon={<Settings size={20} />} iconPosition="start" />
             </Tabs>
           </Paper>
 
@@ -396,6 +512,89 @@ const SettingsPage: React.FC = () => {
                     />
                   ))}
                 </Stack>
+              </SettingSection>
+            </Box>
+          )}
+
+          {/* Device Settings */}
+          {activeTab === 'devices' && (
+            <Box>
+              <SettingSection title="Your Devices">
+                {devicesLoading ? (
+                  <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+                    <CircularProgress />
+                  </Box>
+                ) : devices.length === 0 ? (
+                  <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                    No devices registered yet.
+                  </Typography>
+                ) : (
+                  <Stack spacing={2}>
+                    {devices.map((device: any) => (
+                      <Paper key={device.id} sx={{ p: 2, border: 1, borderColor: 'divider' }}>
+                        <Stack spacing={1}>
+                          <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                            {device.device_name}
+                          </Typography>
+                          <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                            Device ID: {device.device_id}
+                          </Typography>
+                          <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                            Platform: {device.platform}
+                          </Typography>
+                          {device.syncthing_id ? (
+                            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                              Syncthing ID: {device.syncthing_id}
+                            </Typography>
+                          ) : (
+                            <Typography variant="caption" sx={{ color: 'warning.main' }}>
+                              Syncthing ID: Not set
+                            </Typography>
+                          )}
+                          {device.nebula_ip && (
+                            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                              Nebula IP: {device.nebula_ip}
+                            </Typography>
+                          )}
+                          <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                            Status: {device.is_online ? '✓ Online' : '✗ Offline'}
+                          </Typography>
+                        </Stack>
+                      </Paper>
+                    ))}
+                  </Stack>
+                )}
+              </SettingSection>
+
+              <SettingSection title="Sync Syncthing Device ID">
+                <Typography variant="body2" sx={{ mb: 2, color: 'text.secondary' }}>
+                  Your local Syncthing device ID needs to be saved to enable inviting other devices for sharing.
+                </Typography>
+                {syncthingId ? (
+                  <Box>
+                    <TextField
+                      fullWidth
+                      label="Local Syncthing Device ID"
+                      value={syncthingId}
+                      disabled
+                      variant="outlined"
+                      InputProps={{ readOnly: true }}
+                    />
+                    <Box sx={{ mt: 2 }}>
+                      <Button
+                        variant="contained"
+                        onClick={handleUpdateSyncthingId}
+                        disabled={updatingSyncthingId}
+                      >
+                        {updatingSyncthingId ? <CircularProgress size={24} /> : 'Save Syncthing ID'}
+                      </Button>
+                    </Box>
+                  </Box>
+                ) : (
+                  <Alert severity="warning">
+                    Unable to retrieve Syncthing device ID. Make sure Syncthing is running.
+                  </Alert>
+                )}
               </SettingSection>
             </Box>
           )}

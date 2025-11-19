@@ -133,10 +133,11 @@ export class SyncthingService {
   private async makeRequest(
     path: string,
     method: string = 'GET',
-    body?: any
+    body?: any,
+    retryCount: number = 0
   ): Promise<any> {
-    // Get CSRF token first - this is REQUIRED by Syncthing
-    const csrfToken = await this.getCsrfToken();
+    // Get CSRF token - will use cached unless explicitly cleared
+    let csrfToken = await this.getCsrfToken();
     console.log(`[SyncthingService] Making ${method} request to ${path}, API key: ${this.apiKey.substring(0, 8)}..., CSRF token: ${csrfToken ? csrfToken.substring(0, 8) + '...' : 'null'}`);
 
     return new Promise((resolve, reject) => {
@@ -182,6 +183,20 @@ export class SyncthingService {
             console.log(`[SyncthingService] Response status: ${res.statusCode}, data length: ${data.length}`);
             
             if (res.statusCode && res.statusCode >= 400) {
+              // Check if it's a CSRF error
+              if (res.statusCode === 403 && data.includes('CSRF')) {
+                console.warn(`[SyncthingService] CSRF token invalid (403), clearing cache and retrying...`);
+                // Clear the invalid token
+                this.csrfToken = null;
+                // Retry the request with a fresh token (only once to avoid infinite loops)
+                if (retryCount < 1) {
+                  console.log(`[SyncthingService] Retrying request with fresh CSRF token (attempt ${retryCount + 1})`);
+                  this.makeRequest(path, method, body, retryCount + 1)
+                    .then(resolve)
+                    .catch(reject);
+                  return;
+                }
+              }
               console.error(`[SyncthingService] API error: ${res.statusCode} - ${data}`);
               reject(new Error(`Syncthing API error: ${res.statusCode} - ${data}`));
             } else {

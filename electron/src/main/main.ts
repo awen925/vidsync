@@ -16,6 +16,7 @@ import { initializeSyncWebSocket, getSyncWebSocketClient } from './syncWebSocket
 import { listDirectory, scanDirectoryTree, scanDirectoryFlat, getDirectoryStats, FileItem, DirectoryEntry } from './fileScanner';
 import { FileWatcher } from './services/fileWatcher';
 import { snapshotCache } from './services/snapshotCache';
+import axios from 'axios';
 
 let mainWindow: BrowserWindow | null;
 const agentController = new AgentController();
@@ -46,6 +47,40 @@ agentController.events.on('agent:stderr', (msg: string) => forwardLogToRenderer(
 
 const isDev = process.env.NODE_ENV === 'development';
 const isMac = process.platform === 'darwin';
+
+// Function to sync Syncthing device ID for current user
+const syncSyncthingDeviceId = async (accessToken?: string) => {
+  try {
+    // Get Syncthing device ID from the shared instance
+    const syncthingId = await syncthingManager.getDeviceIdForProject('__app_shared__');
+    if (!syncthingId) {
+      logger.warn('[Main] Could not retrieve Syncthing device ID');
+      return;
+    }
+
+    logger.log(`[Main] Got Syncthing device ID: ${syncthingId}`);
+
+    // If access token is provided, update device in backend
+    if (accessToken) {
+      try {
+        // Get user info from mainWindow renderer context if available
+        // For now, we send it to the renderer to handle the update
+        if (mainWindow) {
+          mainWindow.webContents.send('app:update-syncthing-device-id', { syncthingId, accessToken });
+        }
+      } catch (e) {
+        logger.warn('[Main] Error updating device:', e);
+      }
+    } else {
+      // Just send the device ID so it can be used if user logs in
+      if (mainWindow) {
+        mainWindow.webContents.send('app:syncthing-device-id-ready', { syncthingId });
+      }
+    }
+  } catch (e) {
+    logger.warn('[Main] Error syncing Syncthing device ID:', e);
+  }
+};
 
 const createWindow = () => {
   mainWindow = new BrowserWindow({
@@ -83,7 +118,12 @@ app.on('ready', () => {
   agentController.start();
   
   // Initialize Sync WebSocket client for real-time transfer updates
-  initializeSyncWebSocket();
+  // Delay to allow Go-Agent to start (it needs time to boot up)
+  // Increase delay to 3000ms to ensure agent is ready
+  setTimeout(() => {
+    logger.log('[Main] Initializing WebSocket client after agent startup delay...');
+    initializeSyncWebSocket();
+  }, 3000);
   
   // Attempt to start Nebula and Syncthing services as part of app startup only if config exists
   try {
@@ -103,7 +143,11 @@ app.on('ready', () => {
     }
 
     // Start Syncthing always (it can run without nebula) using syncthingManager for centralized control
-    syncthingManager.startForProject('__app_shared__').catch((e) => {
+    syncthingManager.startForProject('__app_shared__').then(() => {
+      logger.log('[Main] Syncthing started, syncing device ID...');
+      // Wait a bit for Syncthing to fully initialize
+      setTimeout(() => syncSyncthingDeviceId(), 2000);
+    }).catch((e) => {
       logger.warn('Failed to start shared Syncthing on app startup:', e);
     });
   } catch (e) {
@@ -934,6 +978,143 @@ const setupIPC = () => {
       };
     } catch (e: any) {
       return { error: e?.message || String(e) };
+    }
+  });
+
+  // ============================================================================
+  // DEVICE MANAGEMENT IPC HANDLERS
+  // ============================================================================
+
+  // Register/update device with backend
+  ipcMain.handle('device:register', async (_ev, { deviceId, deviceName, platform, syncthingId, nebulaIp, accessToken }) => {
+    try {
+      if (!accessToken) {
+        return { ok: false, error: 'No access token provided' };
+      }
+
+      const cloudAPI = axios.create({
+        baseURL: process.env.CLOUD_URL || 'http://localhost:5000/api',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+        },
+      });
+
+      const response = await cloudAPI.post('/devices/register', {
+        deviceId,
+        deviceName,
+        platform,
+        syncthingId: syncthingId || null,
+        nebulaIp: nebulaIp || null,
+      });
+
+      logger.log(`[IPC] Device registered: ${deviceName} (${deviceId})`);
+      return { ok: true, device: response.data.device };
+    } catch (error: any) {
+      logger.error('[IPC] Failed to register device:', error.message || error);
+      return { ok: false, error: error?.response?.data?.error || error?.message || 'Failed to register device' };
+    }
+  });
+
+  // Get all devices for current user
+  ipcMain.handle('device:list', async (_ev, { accessToken }) => {
+    try {
+      if (!accessToken) {
+        return { ok: false, error: 'No access token provided' };
+      }
+
+      const cloudAPI = axios.create({
+        baseURL: process.env.CLOUD_URL || 'http://localhost:5000/api',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+        },
+      });
+
+      const response = await cloudAPI.get('/devices');
+      logger.log(`[IPC] Retrieved ${response.data.devices?.length || 0} devices`);
+      return { ok: true, devices: response.data.devices || [] };
+    } catch (error: any) {
+      logger.error('[IPC] Failed to list devices:', error.message || error);
+      return { ok: false, error: error?.response?.data?.error || error?.message || 'Failed to list devices' };
+    }
+  });
+
+  // Ensure Syncthing folders exist for all user projects (called after device registration)
+  ipcMain.handle('project:ensureFolders', async (_ev, { accessToken, projectIds }) => {
+    try {
+      if (!accessToken) {
+        return { ok: false, error: 'No access token provided' };
+      }
+
+      const cloudAPI = axios.create({
+        baseURL: process.env.CLOUD_URL || 'http://localhost:5000/api',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+        },
+      });
+
+      const results: Record<string, any> = {};
+      const projectsToEnsure = projectIds || [];
+
+      logger.log(`[IPC] Ensuring folders for ${projectsToEnsure.length} projects...`);
+
+      for (const projectId of projectsToEnsure) {
+        try {
+          const response = await cloudAPI.post(`/projects/${projectId}/ensure-folder`);
+          results[projectId] = { ok: true, message: response.data.message };
+          logger.log(`[IPC] Project ${projectId}: Folder ensured`);
+        } catch (error: any) {
+          results[projectId] = { 
+            ok: false, 
+            error: error?.response?.data?.error || error?.message || 'Failed to ensure folder'
+          };
+          logger.warn(`[IPC] Project ${projectId}: Folder ensure failed - ${error?.message}`);
+        }
+      }
+
+      return { ok: true, results };
+    } catch (error: any) {
+      logger.error('[IPC] Failed to ensure folders:', error.message || error);
+      return { ok: false, error: error?.message || 'Failed to ensure folders' };
+    }
+  });
+
+  // Sync device information (get latest Syncthing device ID and update in Supabase)
+  ipcMain.handle('device:syncNow', async (_ev, { accessToken }) => {
+    try {
+      if (!accessToken) {
+        return { ok: false, error: 'No access token provided' };
+      }
+
+      // Get the latest Syncthing device ID from the local API
+      const syncthingId = await syncthingManager.getDeviceIdForProject('__app_shared__');
+      if (!syncthingId) {
+        return { ok: false, error: 'Could not retrieve Syncthing device ID' };
+      }
+
+      logger.log(`[IPC] Syncing device info with Syncthing ID: ${syncthingId}`);
+
+      // Generate a unique device ID for this Electron app instance
+      const deviceId = `electron-${require('os').hostname()}-${process.platform}`;
+
+      const cloudAPI = axios.create({
+        baseURL: process.env.CLOUD_URL || 'http://localhost:5000/api',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+        },
+      });
+
+      const response = await cloudAPI.post('/devices/register', {
+        deviceId,
+        deviceName: `Electron App (${require('os').hostname()})`,
+        platform: 'electron',
+        syncthingId,
+      });
+
+      logger.log(`[IPC] Device synced successfully: ${deviceId}`);
+      return { ok: true, device: response.data.device };
+    } catch (error: any) {
+      logger.error('[IPC] Failed to sync device:', error.message || error);
+      return { ok: false, error: error?.response?.data?.error || error?.message || 'Failed to sync device' };
     }
   });
 

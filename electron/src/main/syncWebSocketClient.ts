@@ -252,11 +252,11 @@ export async function initializeSyncWebSocket(): Promise<void> {
     
     // Set up global event listeners
     client.on('connected', () => {
-      logger.log('Sync WebSocket connected - ready for real-time updates');
+      logger.log('✅ Sync WebSocket connected - ready for real-time updates');
     });
 
     client.on('disconnected', () => {
-      logger.log('Sync WebSocket disconnected - will attempt reconnect');
+      logger.log('⚠️  Sync WebSocket disconnected - will attempt reconnect');
     });
 
     client.on('TransferProgress', (event: TransferProgressEvent) => {
@@ -274,10 +274,15 @@ export async function initializeSyncWebSocket(): Promise<void> {
     // Attempt initial connection
     // This will automatically retry with exponential backoff if it fails
     client.connect().catch((error) => {
-      logger.warn(`Initial WebSocket connection attempt failed (will retry): ${error.message}`);
+      logger.warn(`Initial WebSocket connection attempt failed (will retry automatically): ${error.message}`);
       // The client's internal error handler will trigger attemptReconnect()
     });
+    
+    // Resolve immediately - connection happens in background with auto-retry
+    return Promise.resolve();
   } catch (error) {
     logger.error(`Failed to initialize Sync WebSocket: ${error}`);
+    // Don't throw - let app continue even if WebSocket fails
+    return Promise.resolve();
   }
 }

@@ -63,6 +63,17 @@ const ProjectsPage: React.FC = () => {
         local_path: localPath || null,
       });
       const project = resp.data.project;
+      
+      // Start Syncthing folder for this project (if local path is provided)
+      if (localPath) {
+        try {
+          await (window as any).api.syncthingStartForProject(project.id, localPath);
+        } catch (syncError) {
+          console.error('Failed to start Syncthing for project:', syncError);
+          // Continue anyway - Syncthing setup failure shouldn't block project creation
+        }
+      }
+      
       setName('');
       setDescription('');
       setLocalPath('');

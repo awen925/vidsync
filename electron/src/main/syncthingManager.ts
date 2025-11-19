@@ -354,17 +354,90 @@ export class SyncthingManager {
 
   // Read local Syncthing device ID from config.xml for a project
   async getDeviceIdForProject(projectId: string): Promise<string | null> {
-    const inst = this.instances.get(projectId);
-    const homeDir = inst?.homeDir || path.join(app.getPath('userData'), 'syncthing', projectId);
-    const configPath = path.join(homeDir, 'config.xml');
     try {
-      const content = await fs.promises.readFile(configPath, 'utf-8');
-      const m = content.match(/<id>([^<]+)<\/id>/);
-      if (m && m[1]) return m[1];
-    } catch (e) {
-      // ignore
+      // Get the API key for this project instance
+      const inst = this.instances.get(projectId);
+      let apiKey = inst?.apiKey;
+      
+      // If no instance or no API key, try to get it from the shared instance
+      if (!apiKey && projectId === '__app_shared__' && this.sharedInstance?.apiKey) {
+        apiKey = this.sharedInstance.apiKey;
+      }
+      
+      if (!apiKey) {
+        if (isDevelopment()) {
+          console.warn(`[SyncthingManager] No API key available for project ${projectId}`);
+        }
+        return null;
+      }
+
+      // Call Syncthing API to get device ID
+      return await new Promise<string | null>((resolve) => {
+        const req = https.request(
+          {
+            hostname: 'localhost',
+            port: this.SYNCTHING_API_PORT,
+            path: '/rest/system/status',
+            method: 'GET',
+            headers: {
+              'X-API-Key': apiKey,
+            },
+            rejectUnauthorized: false,
+          },
+          (res) => {
+            let data = '';
+            res.on('data', (chunk) => {
+              data += chunk;
+            });
+            res.on('end', () => {
+              try {
+                const status = JSON.parse(data);
+                // Extract full_id from response
+                const deviceId = status.myID || status.full_id;
+                if (deviceId) {
+                  if (isDevelopment()) {
+                    console.log(`[SyncthingManager] Got device ID from API: ${deviceId}`);
+                  }
+                  resolve(deviceId);
+                } else {
+                  if (isDevelopment()) {
+                    console.warn('[SyncthingManager] Device ID not found in API response');
+                  }
+                  resolve(null);
+                }
+              } catch (parseErr) {
+                if (isDevelopment()) {
+                  console.error('[SyncthingManager] Error parsing Syncthing API response:', parseErr);
+                }
+                resolve(null);
+              }
+            });
+          }
+        );
+
+        req.on('error', (err) => {
+          if (isDevelopment()) {
+            console.error('[SyncthingManager] Error calling Syncthing API:', err);
+          }
+          resolve(null);
+        });
+
+        req.setTimeout(5000, () => {
+          req.destroy();
+          if (isDevelopment()) {
+            console.warn('[SyncthingManager] Timeout calling Syncthing API');
+          }
+          resolve(null);
+        });
+
+        req.end();
+      });
+    } catch (error) {
+      if (isDevelopment()) {
+        console.error('[SyncthingManager] Unexpected error getting device ID:', error);
+      }
+      return null;
     }
-    return null;
   }
 
   // Import a remote device ID into the project's config.xml and add it to the project's folder listing

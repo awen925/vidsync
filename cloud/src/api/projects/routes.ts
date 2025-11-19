@@ -76,177 +76,28 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
       auto_sync: typeof auto_sync === 'boolean' ? auto_sync : true,
     };
 
-    console.log(`[Project:${name}] Step 1: Creating project in database...`);
+    console.log(`[Project:${name}] Creating project in database...`);
 
     const { data, error } = await supabase.from('projects').insert(payload).select().single();
 
     if (error) {
-      console.error(`[Project:${name}] ✗ Failed to create project in DB: ${error.message}`);
+      console.error(`[Project:${name}] Failed to create project in DB: ${error.message}`);
       return res.status(500).json({ error: 'Failed to create project' });
     }
 
     projectId = data.id;
-    console.log(`[Project:${projectId}] ✅ Step 1: Project created in DB`);
-
-    // Initialize SyncthingService early (always needed for checking/waiting)
-    const syncConfig = getSyncthingConfig();
-    const syncthingService = new SyncthingService(
-      syncConfig.apiKey,
-      syncConfig.host,
-      syncConfig.port
-    );
-
-    // Get owner's primary device with Syncthing ID
-    console.log(`[Project:${projectId}] Step 2: Getting device info...`);
-    const { data: devices, error: devErr } = await supabase
-      .from('devices')
-      .select('syncthing_id')
-      .eq('user_id', ownerId)
-      .limit(1);
-
-    const hasDevice = !devErr && devices && devices.length > 0 && devices[0].syncthing_id;
-    if (hasDevice) {
-      const deviceId = devices[0].syncthing_id as string;
-      console.log(`[Project:${projectId}] ✅ Step 2: Device found (${deviceId})`);
-
-      // Step 3: Create Syncthing folder (only if we have a device)
-      console.log(`[Project:${projectId}] Step 3: Sending folder create request to Syncthing...`);
-      try {
-        await syncthingService.createFolder(
-          projectId as string,
-          name,
-          local_path || `/tmp/vidsync/${projectId}`,
-          deviceId
-        );
-        console.log(`[Project:${projectId}] ✅ Step 3: Folder create request sent`);
-      } catch (createErr: any) {
-        console.error(`[Project:${projectId}] ✗ Failed to create Syncthing folder: ${createErr.message}`);
-        throw new Error(`Syncthing folder creation failed: ${createErr.message}`);
-      }
-    } else {
-      console.warn(`[Project:${projectId}] ⚠️  No device found in DB, skipping folder create (but folder may already exist in Syncthing)`);
-      console.log(`[Project:${projectId}] Step 3: Skipped (no device)`);
-    }
-
-    // Step 4: Verify folder exists in Syncthing (critical!)
-    console.log(`[Project:${projectId}] Step 4: Verifying folder exists in Syncthing...`);
-    const folderExists = await syncthingService.verifyFolderExists(projectId as string, 10000);
-    if (!folderExists) {
-      console.error(`[Project:${projectId}] ✗ Folder verification failed - folder not found in Syncthing`);
-      // If no device was in DB and folder doesn't exist, return project but warn user
-      if (!hasDevice) {
-        console.warn(`[Project:${projectId}] ⚠️  No device configured and folder not in Syncthing - returning project without snapshot`);
-        return res.status(201).json({ 
-          project: data,
-          warning: 'No device found and folder does not exist in Syncthing - folder creation skipped'
-        });
-      }
-      // If we tried to create it and it still doesn't exist, that's an error
-      throw new Error('Folder creation verification failed');
-    }
-    console.log(`[Project:${projectId}] ✅ Step 4: Folder verified to exist in Syncthing`);
-
-    // Step 5: Wait for folder to be known (event-based, more reliable than scan)
-    console.log(`[Project:${projectId}] Step 5: Waiting for folder to be known to Syncthing...`);
-    try {
-      await syncthingService.waitForFolderKnown(projectId as string, 30000);
-      console.log(`[Project:${projectId}] ✅ Step 5: Folder is known to Syncthing`);
-    } catch (knownErr) {
-      console.warn(`[Project:${projectId}] ⚠️  Warning: Timeout waiting for folder to be known: ${knownErr}`);
-      // Continue anyway - folder might still be usable
-    }
-
-    // Step 6: Wait for index scan to complete (LocalIndexUpdated event)
-    console.log(`[Project:${projectId}] Step 6: Waiting for folder to be indexed...`);
-    try {
-      await syncthingService.waitForFolderScanned(projectId as string, 120000); // 2 minutes for large folders
-      console.log(`[Project:${projectId}] ✅ Step 6: Folder indexing complete`);
-    } catch (scanErr) {
-      console.warn(`[Project:${projectId}] ⚠️  Warning: Timeout waiting for index scan: ${scanErr}`);
-      // Continue anyway - we can fetch files without waiting for full scan
-    }
-
-    // Step 7: Fetch file list
-    console.log(`[Project:${projectId}] Step 7: Fetching file list from Syncthing...`);
-    let syncFiles = null;
-    const maxRetries = 5;
-    const retryDelays = [500, 1000, 2000, 3000, 5000];
-
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-      try {
-        await new Promise(resolve => setTimeout(resolve, retryDelays[attempt]));
-        
-        console.log(`[Project:${projectId}] Step 7: Attempt ${attempt + 1}/${maxRetries} to fetch files...`);
-        syncFiles = await syncthingService.getFolderFiles(projectId as string, 10);
-        console.log(`[Project:${projectId}] ✅ Step 7: Files fetched (${syncFiles.length} items)`);
-        break;
-      } catch (err: any) {
-        const errorMsg = err.message || String(err);
-        const shouldRetry = 
-          errorMsg.includes('no such folder') ||
-          errorMsg.includes('ECONNREFUSED') ||
-          errorMsg.includes('ETIMEDOUT') ||
-          errorMsg.includes('socket hang up');
-        
-        if (shouldRetry && attempt < maxRetries - 1) {
-          console.warn(`[Project:${projectId}] ⚠️  Retryable error (attempt ${attempt + 1}): ${errorMsg}`);
-        } else if (attempt === maxRetries - 1) {
-          console.error(`[Project:${projectId}] ✗ Failed after ${maxRetries} attempts: ${errorMsg}`);
-          throw err;
-        }
-      }
-    }
-
-    if (!syncFiles) {
-      throw new Error('Failed to fetch files after all retries');
-    }
-
-    // Step 8: Generate and save snapshot
-    console.log(`[Project:${projectId}] Step 8: Generating snapshot...`);
-    if (syncFiles.length > 0) {
-      const snapshotFiles: Array<{
-        path: string;
-        name: string;
-        type: 'file' | 'folder';
-        size: number;
-        hash: string;
-        modifiedAt: string;
-      }> = syncFiles.map(f => ({
-        path: f.path,
-        name: f.name,
-        type: f.type === 'file' ? 'file' : 'folder',
-        size: f.size,
-        hash: '',
-        modifiedAt: f.modTime,
-      }));
-
-      await FileMetadataService.saveSnapshot(projectId as string, name, snapshotFiles);
-      console.log(`[Project:${projectId}] ✅ Step 8: Snapshot saved (${snapshotFiles.length} files)`);
-    } else {
-      console.log(`[Project:${projectId}] Step 8: No files to snapshot (folder is empty)`);
-    }
-
-    // Step 9: Update project with snapshot info
-    console.log(`[Project:${projectId}] Step 9: Updating project record with snapshot URL...`);
-    const snapshotUrl = `${process.env.SUPABASE_URL}/storage/v1/object/public/snapshots/${projectId}-snapshot.json.gz`;
-    const { data: updated } = await supabase
-      .from('projects')
-      .update({
-        snapshot_url: snapshotUrl,
-        snapshot_generated_at: new Date().toISOString(),
-      })
-      .eq('id', projectId)
-      .select()
-      .single();
-    console.log(`[Project:${projectId}] ✅ Step 9: Project record updated`);
-
+    console.log(`[Project:${projectId}] ✅ Project created in database (ID: ${projectId})`);
+    
     const elapsed = Date.now() - startTime;
-    console.log(`[Project:${projectId}] 🎉 CREATION COMPLETE in ${elapsed}ms`);
+    console.log(`[Project:${projectId}] Project creation completed in ${elapsed}ms`);
 
+    // NOTE: Syncthing folder creation is now handled by the Electron client via IPC
+    // The client should call syncthing:startForProject() to create and configure the folder
+    // This keeps local Syncthing operations local and avoids CSRF/connection issues
     res.status(201).json({ 
-      project: updated || data,
-      creationTimeMs: elapsed,
-      filesCount: syncFiles?.length || 0
+      project: data,
+      message: 'Project created. Client should configure Syncthing folder using syncthing:startForProject()',
+      creationTimeMs: elapsed
     });
   } catch (error) {
     console.error('Create project exception:', error);
@@ -544,22 +395,9 @@ router.delete('/:projectId', authMiddleware, async (req: Request, res: Response)
       return res.status(403).json({ error: 'Only project owner can delete' });
     }
 
-    // Delete Syncthing folder (optional - fails gracefully)
-    try {
-      // Use project UUID as folder ID (new standard)
-      const syncthingService = new SyncthingService(
-        process.env.SYNCTHING_API_KEY || '',
-        process.env.SYNCTHING_HOST || 'localhost',
-        parseInt(process.env.SYNCTHING_PORT || '8384')
-      );
-
-      // Delete the folder from Syncthing using project UUID
-      await syncthingService.deleteFolder(projectId);
-      console.log(`Deleted Syncthing folder ${projectId}`);
-    } catch (syncErr) {
-      console.warn(`Failed to delete Syncthing folder: ${syncErr}`);
-      // Continue anyway - database cleanup is more important
-    }
+    // NOTE: Syncthing folder deletion is now handled by the Electron app via IPC
+    // The client should call syncthing:removeProjectFolder() after deletion confirmation
+    // This ensures Syncthing operations are performed locally, not from the central server
 
     // Delete snapshots from Supabase Storage (optional - fails gracefully)
     try {
@@ -2678,6 +2516,103 @@ router.get('/:projectId/download-path', authMiddleware, async (req: Request, res
   } catch (error) {
     console.error('Get download-path exception:', error);
     res.status(500).json({ error: 'Failed to fetch download path' });
+  }
+});
+
+/**
+ * POST /api/projects/:projectId/ensure-folder
+ * Ensure a Syncthing folder exists for a project.
+ * Called by client after device registration to create folders that were skipped during project creation.
+ */
+router.post('/:projectId/ensure-folder', authMiddleware, async (req: Request, res: Response) => {
+  const userId = (req as any).user.id;
+  const { projectId } = req.params;
+
+  try {
+    console.log(`[Project:${projectId}] POST /ensure-folder - Checking if folder needs to be created...`);
+
+    // Get the project
+    const { data: project, error: projErr } = await supabase
+      .from('projects')
+      .select('*')
+      .eq('id', projectId)
+      .eq('owner_id', userId)
+      .single();
+
+    if (projErr || !project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    // Get the user's device with Syncthing ID
+    const { data: devices, error: devErr } = await supabase
+      .from('devices')
+      .select('syncthing_id')
+      .eq('user_id', userId)
+      .limit(1);
+
+    if (!devices || devices.length === 0 || !devices[0].syncthing_id) {
+      return res.status(400).json({ error: 'No device with Syncthing ID found' });
+    }
+
+    const deviceId = devices[0].syncthing_id as string;
+    console.log(`[Project:${projectId}] Device ID: ${deviceId}`);
+
+    // Initialize Syncthing service
+    const syncConfig = getSyncthingConfig();
+    const syncthingService = new SyncthingService(
+      syncConfig.apiKey,
+      syncConfig.host,
+      syncConfig.port
+    );
+
+    // Check if folder already exists
+    console.log(`[Project:${projectId}] Checking if folder exists...`);
+    try {
+      const folder = await syncthingService.getFolder(projectId);
+      if (folder) {
+        console.log(`[Project:${projectId}] ✅ Folder already exists in Syncthing`);
+        return res.status(200).json({ 
+          message: 'Folder already exists',
+          folder
+        });
+      }
+    } catch (err) {
+      // Folder doesn't exist, continue to create it
+      console.log(`[Project:${projectId}] Folder does not exist yet, will create it`);
+    }
+
+    // Create the folder
+    console.log(`[Project:${projectId}] Creating Syncthing folder...`);
+    try {
+      await syncthingService.createFolder(
+        projectId,
+        project.name,
+        project.local_path || `/tmp/vidsync/${projectId}`,
+        deviceId
+      );
+      console.log(`[Project:${projectId}] ✅ Folder creation request sent`);
+    } catch (createErr: any) {
+      console.error(`[Project:${projectId}] ✗ Failed to create folder: ${createErr.message}`);
+      return res.status(500).json({ error: `Failed to create folder: ${createErr.message}` });
+    }
+
+    // Verify folder was created
+    console.log(`[Project:${projectId}] Verifying folder creation...`);
+    const folderExists = await syncthingService.verifyFolderExists(projectId, 10000);
+    if (!folderExists) {
+      console.error(`[Project:${projectId}] ✗ Folder verification failed`);
+      return res.status(500).json({ error: 'Folder verification failed' });
+    }
+
+    console.log(`[Project:${projectId}] ✅ Folder ensured and verified`);
+    res.status(200).json({ 
+      message: 'Folder created and verified',
+      projectId
+    });
+
+  } catch (error) {
+    console.error(`[Project:${projectId}] POST /ensure-folder exception:`, error);
+    res.status(500).json({ error: 'Failed to ensure folder' });
   }
 });
 

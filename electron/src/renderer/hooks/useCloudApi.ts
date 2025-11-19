@@ -6,7 +6,6 @@ let accessToken: string | null = null;
 
 export const agentAPI: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 10000,
 });
 
 agentAPI.interceptors.request.use(async (config) => {
@@ -51,7 +50,6 @@ export const setAccessToken = (token: string) => {
 
 export const cloudAPI: AxiosInstance = axios.create({
   baseURL: process.env.REACT_APP_CLOUD_URL || 'http://localhost:3000/api',
-  timeout: 10000,
 });
 
 cloudAPI.interceptors.request.use(async (config) => {

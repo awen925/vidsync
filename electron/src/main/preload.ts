@@ -36,6 +36,12 @@ contextBridge.exposeInMainWorld('api', {
   // Real-time sync progress via WebSocket
   syncSubscribe: (eventType: string) => ipcRenderer.invoke('sync:subscribe', eventType),
   syncStatus: () => ipcRenderer.invoke('sync:status'),
+  // Device management
+  deviceRegister: (opts: { deviceId: string; deviceName: string; platform: string; syncthingId?: string; nebulaIp?: string; accessToken: string }) => ipcRenderer.invoke('device:register', opts),
+  deviceList: (opts: { accessToken: string }) => ipcRenderer.invoke('device:list', opts),
+  deviceSyncNow: (opts: { accessToken: string }) => ipcRenderer.invoke('device:syncNow', opts),
+  // Project folder management
+  projectEnsureFolders: (opts: { accessToken: string; projectIds?: string[] }) => ipcRenderer.invoke('project:ensureFolders', opts),
   onSyncTransferProgress: (cb: (event: any) => void) => ipcRenderer.on('sync:transfer-progress', (_ev, data) => cb(data)),
   onSyncComplete: (cb: (event: any) => void) => ipcRenderer.on('sync:complete', (_ev, data) => cb(data)),
   onSyncError: (cb: (event: any) => void) => ipcRenderer.on('sync:error', (_ev, data) => cb(data)),
