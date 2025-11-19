@@ -327,24 +327,48 @@ router.get('/list/invited', authMiddleware, async (req: Request, res: Response) 
     
     // Build a map of owner info (we'll fetch user info from auth)
     // For now, just use empty owner info (email/full_name not critical for MVP)
-    const transformedProjects = (projects || []).map((p: any) => ({
-      id: p.id,
-      owner_id: p.owner_id,
-      name: p.name,
-      description: p.description,
-      local_path: p.local_path,
-      syncthing_folder_id: p.syncthing_folder_id,
-      auto_sync: p.auto_sync,
-      sync_mode: p.sync_mode,
-      status: p.status,
-      last_synced: p.last_synced,
-      created_at: p.created_at,
-      updated_at: p.updated_at,
-      owner: {
-        id: p.owner_id,
-        email: 'owner@example.com', // Not critical for MVP
-        full_name: 'Project Owner',  // Not critical for MVP
+    const transformedProjects = await Promise.all((projects || []).map(async (p: any) => {
+      // Calculate file_count and total_size from snapshot if available
+      let file_count = 0;
+      let total_size = 0;
+
+      if (p.snapshot_url) {
+        try {
+          const snapshot = await FileMetadataService.loadSnapshot(p.snapshot_url);
+          const files = snapshot.files || [];
+          const flatFiles = flattenFileTree(files);
+          file_count = flatFiles.length;
+          total_size = flatFiles.reduce((sum: number, f: any) => sum + (f.size || 0), 0);
+        } catch (err) {
+          console.warn(`Failed to load snapshot for project ${p.id}:`, err);
+          // Use defaults if snapshot fails
+          file_count = 0;
+          total_size = 0;
+        }
       }
+
+      return {
+        id: p.id,
+        owner_id: p.owner_id,
+        name: p.name,
+        description: p.description,
+        local_path: p.local_path,
+        syncthing_folder_id: p.syncthing_folder_id,
+        auto_sync: p.auto_sync,
+        sync_mode: p.sync_mode,
+        status: p.status,
+        last_synced: p.last_synced,
+        created_at: p.created_at,
+        updated_at: p.updated_at,
+        snapshot_url: p.snapshot_url,
+        file_count,
+        total_size,
+        owner: {
+          id: p.owner_id,
+          email: 'owner@example.com', // Not critical for MVP
+          full_name: 'Project Owner',  // Not critical for MVP
+        }
+      };
     }));
 
     res.json({ projects: transformedProjects });
@@ -614,9 +638,11 @@ router.post('/:projectId/invite', authMiddleware, async (req: Request, res: Resp
 });
 
 // POST /api/projects/:projectId/invite-token - Generate shareable invite token
+// OPTIONAL: Can pass invited_email to track which email(s) can use this token
 router.post('/:projectId/invite-token', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { projectId } = req.params;
+    const { invited_email } = req.body;
     const userId = (req as any).user.id;
 
     // Verify project ownership
@@ -646,6 +672,7 @@ router.post('/:projectId/invite-token', authMiddleware, async (req: Request, res
       project_id: projectId,
       invite_token: token,
       created_by: userId,
+      invited_email: invited_email || null, // Track which email was invited
       created_at: new Date().toISOString(),
       expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days
       is_active: true,
@@ -764,10 +791,10 @@ router.post('/join', authMiddleware, async (req: Request, res: Response) => {
     // Auto-add user's device to Syncthing folder (optional)
     try {
       if (project.syncthing_folder_id) {
-        // Get user's primary Syncthing device ID
+        // Get user's primary Syncthing device ID and device UUID
         const { data: userDevices, error: devErr } = await supabase
           .from('devices')
-          .select('syncthing_id')
+          .select('id, syncthing_id')
           .eq('user_id', userId)
           .limit(1);
 
@@ -782,23 +809,45 @@ router.post('/join', authMiddleware, async (req: Request, res: Response) => {
           !devErr && userDevices && userDevices.length > 0 && userDevices[0].syncthing_id &&
           !ownerDevErr && ownerDevices && ownerDevices.length > 0 && ownerDevices[0].syncthing_id
         ) {
+          const inviteeDeviceId = userDevices[0].syncthing_id;
+          const inviteeDeviceUuid = userDevices[0].id;
           const syncthingService = new SyncthingService(
             process.env.SYNCTHING_API_KEY || '',
             process.env.SYNCTHING_HOST || 'localhost',
             parseInt(process.env.SYNCTHING_PORT || '8384')
           );
 
-          // Add the invited user's device to the folder
-          await syncthingService.addDeviceToFolder(
+          // Add the invited user's device to the folder with RECEIVEONLY role
+          // This ensures they can only download files, not upload/modify them
+          await syncthingService.addDeviceToFolderWithRole(
             project.syncthing_folder_id,
-            userDevices[0].syncthing_id
+            inviteeDeviceId,
+            'receiveonly'  // ← CRITICAL: Enforce read-only access for invitees
           );
 
-          console.log(`Auto-added device to Syncthing folder for project ${projectId}`);
+          // Record the device-project role mapping for reference
+          const { error: roleErr } = await supabase
+            .from('project_device_roles')
+            .insert({
+              project_id: projectId,
+              device_id: inviteeDeviceUuid,  // Device UUID from devices table
+              user_id: userId,
+              role: 'viewer',  // Invitees are viewers
+              folder_type: 'receiveonly',  // Syncthing enforces this
+            })
+            .select()
+            .single();
+
+          if (roleErr) {
+            console.warn(`[Join] Failed to record device role: ${roleErr.message}`);
+            // Don't fail - role is recorded at DB level but not critical for sync
+          }
+
+          console.log(`[Join] ✅ Added invitee device to Syncthing folder with receiveonly role for project ${projectId}`);
         }
       }
     } catch (syncErr) {
-      console.warn(`Failed to auto-add device to Syncthing folder: ${syncErr}`);
+      console.warn(`[Join] Failed to add device to Syncthing folder: ${syncErr}`);
       // Continue anyway - device can be added manually later
     }
 
@@ -1243,6 +1292,79 @@ router.get('/:projectId/snapshot-metadata', authMiddleware, async (req: Request,
     res.status(500).json({ error: 'Failed to fetch snapshot metadata' });
   }
 });
+
+/**
+ * GET /api/projects/:projectId/file-tree
+ * Returns file tree structure from snapshot (for file browser UI in invited projects)
+ * Much better UX than flat pagination list
+ */
+router.get('/:projectId/file-tree', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { projectId } = req.params;
+    const userId = (req as any).user.id;
+
+    // Verify user is member (owner or invited)
+    const { data: project } = await supabase
+      .from('projects')
+      .select('owner_id, snapshot_url, name')
+      .eq('id', projectId)
+      .single();
+
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    const isOwner = project.owner_id === userId;
+
+    if (!isOwner) {
+      const { data: member } = await supabase
+        .from('project_members')
+        .select('status')
+        .eq('project_id', projectId)
+        .eq('user_id', userId)
+        .single();
+
+      if (!member) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+    }
+
+    // Load snapshot from storage if available
+    let fileTree: any = null;
+    let totalFiles = 0;
+    let totalSize = 0;
+    
+    if (project.snapshot_url) {
+      try {
+        const snapshot = await FileMetadataService.loadSnapshot(project.snapshot_url);
+        fileTree = snapshot.files || [];
+        
+        // Calculate totals
+        const flatFiles = flattenFileTree(fileTree);
+        totalFiles = flatFiles.length;
+        totalSize = flatFiles.reduce((sum, f) => sum + (f.size || 0), 0);
+      } catch (err) {
+        console.warn('Failed to load snapshot:', err);
+        return res.status(404).json({ error: 'Snapshot not available' });
+      }
+    } else {
+      return res.status(404).json({ error: 'No snapshot available yet' });
+    }
+
+    res.json({
+      tree: fileTree,
+      summary: {
+        totalFiles,
+        totalSize,
+        projectName: project.name,
+      },
+    });
+  } catch (error) {
+    console.error('Get file-tree exception:', error);
+    res.status(500).json({ error: 'Failed to fetch file tree' });
+  }
+});
+
 
 /**
  * GET /api/projects/:projectId/file-sync-status
@@ -1746,6 +1868,97 @@ router.get('/:projectId/sync-status', authMiddleware, async (req: Request, res: 
   }
 });
 
+// GET /api/projects/:projectId/invited-users - Get list of invited users
+// Shows email addresses of users invited via shareable tokens
+router.get('/:projectId/invited-users', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { projectId } = req.params;
+    const userId = (req as any).user.id;
+
+    // Verify access: user must be owner or accepted member
+    const { data: project, error: projectErr } = await supabase
+      .from('projects')
+      .select('*')
+      .eq('id', projectId)
+      .single();
+
+    if (projectErr || !project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    // Check permission
+    const isOwner = project.owner_id === userId;
+    if (!isOwner) {
+      const { data: memberRow } = await supabase
+        .from('project_members')
+        .select('*')
+        .eq('project_id', projectId)
+        .eq('user_id', userId)
+        .eq('status', 'accepted')
+        .single();
+
+      if (!memberRow) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+    }
+
+    // Get all active invites with invited_email for this project
+    const { data: invites, error: invErr } = await supabase
+      .from('project_invites')
+      .select('*')
+      .eq('project_id', projectId)
+      .eq('is_active', true);
+
+    if (invErr) {
+      console.error('Failed to fetch invited users:', invErr.message);
+      return res.status(500).json({ error: 'Failed to fetch invited users' });
+    }
+
+    // Get actual members (already joined)
+    const { data: members, error: memErr } = await supabase
+      .from('project_members')
+      .select('*')
+      .eq('project_id', projectId)
+      .eq('status', 'accepted');
+
+    if (memErr) {
+      console.error('Failed to fetch members:', memErr.message);
+      return res.status(500).json({ error: 'Failed to fetch members' });
+    }
+
+    // Transform response: combine invited emails and accepted members
+    const invitedEmails = (invites || [])
+      .filter((inv: any) => inv.invited_email) // Only include those with emails
+      .map((inv: any) => ({
+        type: 'invited',
+        email: inv.invited_email,
+        invitedAt: inv.created_at,
+        invitedBy: inv.created_by,
+        status: 'pending',
+      }));
+
+    const memberEmails = (members || [])
+      .filter((m: any) => m.user_id) // Only actual members (not pending)
+      .map((m: any) => ({
+        type: 'member',
+        userId: m.user_id,
+        role: m.role,
+        status: 'accepted',
+        joinedAt: m.joined_at,
+      }));
+
+    res.json({
+      invitedCount: invitedEmails.length,
+      membersCount: memberEmails.length,
+      invited: invitedEmails,
+      members: memberEmails,
+    });
+  } catch (error) {
+    console.error('Get invited-users exception:', error);
+    res.status(500).json({ error: 'Failed to fetch invited users' });
+  }
+});
+
 // ================== END PHASE 1 ENDPOINTS ==================
 
 // GET /api/projects/:projectId/files - Get file tree from local path (OWNER ONLY)
@@ -2230,5 +2443,170 @@ router.post('/:projectId/generate-snapshot', authMiddleware, async (req: Request
   }
 });
 
+/**
+ * GET /api/projects/:projectId/sync-status
+ * Get current sync status (paused or syncing)
+ */
+router.get('/:projectId/sync-status', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { projectId } = req.params;
+    const userId = (req as any).user.id;
+
+    const { data: project } = await supabase
+      .from('projects')
+      .select('owner_id, syncthing_folder_id')
+      .eq('id', projectId)
+      .single();
+
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    const isOwner = project.owner_id === userId;
+    if (!isOwner) {
+      const { data: member } = await supabase
+        .from('project_members')
+        .select('id')
+        .eq('project_id', projectId)
+        .eq('user_id', userId)
+        .single();
+
+      if (!member) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+    }
+
+    // Get folder status from Syncthing
+    const syncthingService = new SyncthingService(
+      process.env.SYNCTHING_API_KEY || '',
+      process.env.SYNCTHING_HOST || 'localhost',
+      parseInt(process.env.SYNCTHING_PORT || '8384')
+    );
+
+    const status = await syncthingService.getFolderStatus(project.syncthing_folder_id);
+
+    res.json({
+      projectId,
+      paused: status.paused,
+      state: status.state, // idle, syncing, scanning, error
+      needItems: status.needItems,
+      inSyncItems: status.inSyncItems,
+      completion: status.completion,
+    });
+  } catch (error) {
+    console.error('Sync-status exception:', error);
+    res.status(500).json({ error: 'Failed to fetch sync status' });
+  }
+});
+
+/**
+ * PUT /api/projects/:projectId/download-path
+ * Set custom download path for a project (TASK 5)
+ * Default: ~/downloads/vidsync/{projectName}-{projectId}/
+ */
+router.put('/:projectId/download-path', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { projectId } = req.params;
+    const { downloadPath } = req.body;
+    const userId = (req as any).user.id;
+
+    if (!downloadPath || typeof downloadPath !== 'string') {
+      return res.status(400).json({ error: 'Invalid download path' });
+    }
+
+    // Verify user is owner or member
+    const { data: project } = await supabase
+      .from('projects')
+      .select('owner_id, name')
+      .eq('id', projectId)
+      .single();
+
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    const isOwner = project.owner_id === userId;
+    if (!isOwner) {
+      const { data: member } = await supabase
+        .from('project_members')
+        .select('id')
+        .eq('project_id', projectId)
+        .eq('user_id', userId)
+        .single();
+
+      if (!member) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+    }
+
+    // Update project with new download path
+    const { error } = await supabase
+      .from('projects')
+      .update({ local_sync_path: downloadPath })
+      .eq('id', projectId);
+
+    if (error) {
+      console.error('Failed to update download path:', error);
+      return res.status(500).json({ error: 'Failed to update download path' });
+    }
+
+    res.json({
+      success: true,
+      projectId,
+      projectName: project.name,
+      downloadPath,
+    });
+  } catch (error) {
+    console.error('Update download-path exception:', error);
+    res.status(500).json({ error: 'Failed to update download path' });
+  }
+});
+
+/**
+ * GET /api/projects/:projectId/download-path
+ * Get current download path for a project
+ */
+router.get('/:projectId/download-path', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { projectId } = req.params;
+    const userId = (req as any).user.id;
+
+    const { data: project } = await supabase
+      .from('projects')
+      .select('owner_id, name, local_sync_path')
+      .eq('id', projectId)
+      .single();
+
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    const isOwner = project.owner_id === userId;
+    if (!isOwner) {
+      const { data: member } = await supabase
+        .from('project_members')
+        .select('id')
+        .eq('project_id', projectId)
+        .eq('user_id', userId)
+        .single();
+
+      if (!member) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+    }
+
+    res.json({
+      projectId,
+      projectName: project.name,
+      downloadPath: project.local_sync_path || `~/downloads/vidsync/${project.name}-${projectId}`,
+      isCustom: !!project.local_sync_path,
+    });
+  } catch (error) {
+    console.error('Get download-path exception:', error);
+    res.status(500).json({ error: 'Failed to fetch download path' });
+  }
+});
+
 export default router;
+
 

@@ -266,26 +266,9 @@ export class SyncthingService {
   }
 
   // Add device to folder (enable syncing to that device)
+  // Backward compatible - defaults to receiveonly for invitees
   async addDeviceToFolder(folderId: string, deviceId: string): Promise<void> {
-    try {
-      const folder = await this.getFolder(folderId);
-      
-      // Check if device already in folder
-      const alreadyExists = folder.devices.some((d) => d.deviceID === deviceId);
-      if (alreadyExists) {
-        console.log(`Device ${deviceId} already in folder ${folderId}`);
-        return;
-      }
-
-      // Add device
-      folder.devices.push({ deviceID: deviceId });
-      await this.updateFolder(folderId, folder);
-      
-      console.log(`Added device ${deviceId} to folder ${folderId}`);
-    } catch (error) {
-      console.error(`Failed to add device to folder:`, error);
-      throw error;
-    }
+    return this.addDeviceToFolderWithRole(folderId, deviceId, 'receiveonly');
   }
 
   // Remove device from folder
@@ -296,9 +279,9 @@ export class SyncthingService {
       folder.devices = folder.devices.filter((d) => d.deviceID !== deviceId);
       await this.updateFolder(folderId, folder);
       
-      console.log(`Removed device ${deviceId} from folder ${folderId}`);
+      console.log(`[SyncthingService] Removed device ${deviceId} from folder ${folderId}`);
     } catch (error) {
-      console.error(`Failed to remove device from folder:`, error);
+      console.error(`[SyncthingService] Failed to remove device from folder:`, error);
       throw error;
     }
   }
@@ -686,7 +669,7 @@ export class SyncthingService {
         id: folderId,
         label: label,
         path: path,
-        type: 'sendreceive', // Can send and receive changes
+        type: 'sendreceive', // Owner device can send and receive changes
         devices: [
           {
             deviceID: ownerDeviceId, // Owner's device
@@ -707,10 +690,56 @@ export class SyncthingService {
       };
 
       const response = await this.makeRequest('/rest/config/folders', 'POST', folderConfig);
-      console.log(`Created Syncthing folder ${folderId} at ${path}`);
+      console.log(`[SyncthingService] Created Syncthing folder ${folderId} at ${path} with sendreceive type for owner ${ownerDeviceId}`);
       return response;
     } catch (error) {
-      console.error(`Failed to create Syncthing folder ${folderId}:`, error);
+      console.error(`[SyncthingService] Failed to create Syncthing folder ${folderId}:`, error);
+      throw error;
+    }
+  }
+
+  // Add device to folder with optional role (sendreceive or receiveonly)
+  // CRITICAL: In Syncthing, the folder type is PER-DEVICE
+  // - Owner's device: folder type = "sendreceive" (can send and receive)
+  // - Invitee's device: folder type = "receiveonly" (can only receive)
+  async addDeviceToFolderWithRole(
+    folderId: string, 
+    deviceId: string, 
+    role: 'sendreceive' | 'receiveonly' = 'receiveonly'
+  ): Promise<void> {
+    try {
+      const folder = await this.getFolder(folderId);
+      
+      // Check if device already in folder
+      const alreadyExists = folder.devices.some((d) => d.deviceID === deviceId);
+      if (alreadyExists) {
+        console.log(`[SyncthingService] Device ${deviceId} already in folder ${folderId}`);
+        return;
+      }
+
+      // Add device to owner's folder device list
+      folder.devices.push({ deviceID: deviceId });
+      
+      console.log(
+        `[SyncthingService] Adding device ${deviceId} to folder ${folderId} with role: ${role}`
+      );
+
+      // Update the folder on the owner's device
+      await this.updateFolder(folderId, folder);
+      console.log(
+        `[SyncthingService] ✅ Added device ${deviceId} to folder ${folderId}. ` +
+        `IMPORTANT: Invitee must configure folder as "receiveonly" on their device.`
+      );
+
+      // NOTE: The invitee's device needs to be configured separately:
+      // 1. Syncthing will PROPOSE the share to the invitee's device
+      // 2. Invitee accepts the share on their device UI
+      // 3. OR we use Go-Agent to auto-configure the folder with receiveonly type
+      // 
+      // Current implementation requires manual acceptance.
+      // TODO: Implement Go-Agent endpoint to auto-accept and configure folder as receiveonly
+    } catch (error) {
+      console.error(`[SyncthingService] Failed to add device to folder:`, error);
       throw error;
     }
   }
@@ -737,4 +766,41 @@ export class SyncthingService {
       return false;
     }
   }
+
+  // Send folder configuration command to invitee's Go-Agent
+  // This tells the invitee's device to accept the folder share and configure it as receiveonly
+  async notifyInviteeToAcceptFolder(
+    inviteeWebSocketUrl: string,
+    folderId: string,
+    folderLabel: string,
+    folderPath: string,
+    ownerDeviceId: string
+  ): Promise<void> {
+    try {
+      const command = {
+        type: 'folder_share_accept',
+        data: {
+          folderId,
+          folderLabel,
+          folderPath,
+          ownerDeviceId,
+          folderType: 'receiveonly', // ← CRITICAL: Enforce read-only
+        },
+      };
+
+      console.log(
+        `[SyncthingService] Sending folder share accept command to invitee at ${inviteeWebSocketUrl}`
+      );
+      
+      // This would be sent via WebSocket from the cloud backend
+      // OR via HTTP if Go-Agent exposes a REST endpoint for this
+      // TODO: Implement this communication channel
+      
+      console.log(`[SyncthingService] ℹ️ Invitee needs to accept folder ${folderId} as receiveonly`);
+    } catch (error) {
+      console.error(`[SyncthingService] Failed to notify invitee:`, error);
+      throw error;
+    }
+  }
 }
+

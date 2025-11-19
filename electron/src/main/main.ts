@@ -12,6 +12,7 @@ import { AgentController } from './agentController';
 import { SyncthingManager } from './syncthingManager';
 import { NebulaManager } from './nebulaManager';
 import { logger } from './logger';
+import { initializeSyncWebSocket, getSyncWebSocketClient } from './syncWebSocketClient';
 import { listDirectory, scanDirectoryTree, scanDirectoryFlat, getDirectoryStats, FileItem, DirectoryEntry } from './fileScanner';
 import { FileWatcher } from './services/fileWatcher';
 
@@ -79,6 +80,10 @@ app.on('ready', () => {
   createWindow();
   setupIPC();
   agentController.start();
+  
+  // Initialize Sync WebSocket client for real-time transfer updates
+  initializeSyncWebSocket();
+  
   // Attempt to start Nebula and Syncthing services as part of app startup only if config exists
   try {
     const nebulaDir = path.join(app.getPath('userData'), 'nebula');
@@ -852,6 +857,73 @@ const setupIPC = () => {
       return { ok: false, message: 'timeout' };
     } catch (e: any) {
       return { ok: false, error: e?.message || String(e) };
+    }
+  });
+
+  // WebSocket: Subscribe to sync events
+  // Renderer can listen for real-time transfer progress, completion, errors
+  ipcMain.handle('sync:subscribe', async (_ev, eventType: string) => {
+    try {
+      const client = getSyncWebSocketClient();
+      if (!client.isConnected()) {
+        return { ok: false, error: 'WebSocket not connected' };
+      }
+      // The subscription is handled via IPC main -> renderer forwarding below
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || String(e) };
+    }
+  });
+
+  // WebSocket: Get current connection status
+  ipcMain.handle('sync:status', async () => {
+    try {
+      const client = getSyncWebSocketClient();
+      return { 
+        connected: client.isConnected(),
+        url: 'ws://127.0.0.1:29999/v1/events'
+      };
+    } catch (e: any) {
+      return { error: e?.message || String(e) };
+    }
+  });
+
+  // Set up event forwarding from WebSocket to renderer
+  const syncClient = getSyncWebSocketClient();
+  
+  syncClient.on('TransferProgress', (event) => {
+    if (mainWindow) {
+      mainWindow.webContents.send('sync:transfer-progress', event);
+    }
+  });
+
+  syncClient.on('SyncComplete', (event) => {
+    if (mainWindow) {
+      mainWindow.webContents.send('sync:complete', event);
+    }
+  });
+
+  syncClient.on('SyncError', (event) => {
+    if (mainWindow) {
+      mainWindow.webContents.send('sync:error', event);
+    }
+  });
+
+  syncClient.on('sync-event', (event) => {
+    if (mainWindow) {
+      mainWindow.webContents.send('sync:event', event);
+    }
+  });
+
+  syncClient.on('connected', () => {
+    if (mainWindow) {
+      mainWindow.webContents.send('sync:connected');
+    }
+  });
+
+  syncClient.on('disconnected', () => {
+    if (mainWindow) {
+      mainWindow.webContents.send('sync:disconnected');
     }
   });
 

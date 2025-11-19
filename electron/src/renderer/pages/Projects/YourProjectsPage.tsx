@@ -74,6 +74,12 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
   const [shareEmailError, setShareEmailError] = useState('');
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleteConfirmLoading, setDeleteConfirmLoading] = useState(false);
+  const [duplicateErrorOpen, setDuplicateErrorOpen] = useState(false);
+  const [duplicateErrorData, setDuplicateErrorData] = useState<{
+    path: string;
+    existingProjectName: string;
+    existingProjectId: string;
+  } | null>(null);
 
   useEffect(() => {
     fetchProjects();
@@ -218,8 +224,18 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
       setNewProjectDesc('');
       setNewProjectLocalPath('');
       await fetchProjects();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to create project:', error);
+      
+      // Check if this is a duplicate path error
+      if (error.response?.status === 409 && error.response?.data?.code === 'DUPLICATE_PROJECT_PATH') {
+        setDuplicateErrorData({
+          path: newProjectLocalPath || '',
+          existingProjectName: error.response.data.existingProjectName || 'Unknown',
+          existingProjectId: error.response.data.existingProjectId || '',
+        });
+        setDuplicateErrorOpen(true);
+      }
     }
   };
 
@@ -367,6 +383,7 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
               />
             ) : (
               <YourProjectSharedTab
+                projectId={selectedProject?.id}
                 inviteCode={inviteCode}
                 copiedCode={copiedCode}
                 shareEmail={shareEmail}
@@ -642,6 +659,72 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
             disabled={deleteConfirmLoading}
           >
             {deleteConfirmLoading ? 'Deleting...' : 'Delete Project'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Duplicate Path Error Dialog */}
+      <Dialog open={duplicateErrorOpen} onClose={() => setDuplicateErrorOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <AlertCircle size={24} color="#d32f2f" />
+          Duplicate Local Path
+        </DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <Alert severity="error">
+              A project with this local path already exists
+            </Alert>
+            
+            <Box sx={{ 
+              p: 2, 
+              backgroundColor: '#f5f5f5', 
+              borderRadius: 1,
+              border: '1px solid #e0e0e0'
+            }}>
+              <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mb: 0.5 }}>
+                Local Path:
+              </Typography>
+              <Typography 
+                variant="body2" 
+                sx={{ 
+                  wordBreak: 'break-all',
+                  fontFamily: 'monospace',
+                  mb: 2,
+                  fontWeight: 500
+                }}
+              >
+                {duplicateErrorData?.path}
+              </Typography>
+
+              <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mb: 0.5 }}>
+                Already used by:
+              </Typography>
+              <Typography 
+                variant="body2" 
+                sx={{ 
+                  fontWeight: 500,
+                  color: 'primary.main'
+                }}
+              >
+                {duplicateErrorData?.existingProjectName}
+              </Typography>
+            </Box>
+
+            <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+              Each local path can only be used for one project. Please choose a different path or edit the existing project if needed.
+            </Typography>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button 
+            onClick={() => {
+              setDuplicateErrorOpen(false);
+              setDuplicateErrorData(null);
+            }}
+            variant="contained"
+            disableRipple
+          >
+            Understood
           </Button>
         </DialogActions>
       </Dialog>

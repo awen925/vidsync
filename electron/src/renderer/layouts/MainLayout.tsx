@@ -32,7 +32,7 @@ import {
 import { useAppTheme } from '../theme/AppThemeProvider';
 import YourProjectsPage from '../pages/Projects/YourProjectsPage';
 import InvitedProjectsPage from '../pages/Projects/InvitedProjectsPage';
-import ProfilePage from '../pages/Settings/ProfilePage';
+import ProfilePage from '../pages/AppSettings/ProfilePage';
 import AppSettingsPage from '../pages/AppSettings/SettingsPage';
 import SubscriptionPage from '../pages/AppSettings/SubscriptionPage';
 

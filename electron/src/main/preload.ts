@@ -33,6 +33,15 @@ contextBridge.exposeInMainWorld('api', {
   nebulaWaitForTun: (timeoutMs?: number) => ipcRenderer.invoke('nebula:waitForTun', timeoutMs || 20000),
   processGetStatus: () => ipcRenderer.invoke('process:getStatus'),
   processStopAll: () => ipcRenderer.invoke('process:stopAll'),
+  // Real-time sync progress via WebSocket
+  syncSubscribe: (eventType: string) => ipcRenderer.invoke('sync:subscribe', eventType),
+  syncStatus: () => ipcRenderer.invoke('sync:status'),
+  onSyncTransferProgress: (cb: (event: any) => void) => ipcRenderer.on('sync:transfer-progress', (_ev, data) => cb(data)),
+  onSyncComplete: (cb: (event: any) => void) => ipcRenderer.on('sync:complete', (_ev, data) => cb(data)),
+  onSyncError: (cb: (event: any) => void) => ipcRenderer.on('sync:error', (_ev, data) => cb(data)),
+  onSyncEvent: (cb: (event: any) => void) => ipcRenderer.on('sync:event', (_ev, data) => cb(data)),
+  onSyncConnected: (cb: () => void) => ipcRenderer.on('sync:connected', () => cb()),
+  onSyncDisconnected: (cb: () => void) => ipcRenderer.on('sync:disconnected', () => cb()),
   // Log subscription helpers
   onNebulaLog: (cb: (msg: string) => void) => ipcRenderer.on('logs:nebula', (_ev, msg) => cb(msg)),
   onSyncthingLog: (cb: (msg: string) => void) => ipcRenderer.on('logs:syncthing', (_ev, msg) => cb(msg)),

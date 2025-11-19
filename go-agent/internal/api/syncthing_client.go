@@ -42,6 +42,27 @@ func (sc *SyncthingClient) AddFolder(folderID, folderLabel, folderPath string) e
 	return sc.postConfig("folders", payload)
 }
 
+// AddFolderReceiveOnly adds a folder to Syncthing with receiveonly type
+// This is used when an invitee device joins a shared folder
+// The invitee can only RECEIVE files, not send them back
+func (sc *SyncthingClient) AddFolderReceiveOnly(folderID, folderLabel, folderPath string, ownerDeviceID string) error {
+	payload := map[string]interface{}{
+		"id":    folderID,
+		"label": folderLabel,
+		"path":  folderPath,
+		"type":  "receiveonly", // ← KEY: Receive-only prevents uploads
+		"devices": []map[string]string{
+			{
+				"deviceID": ownerDeviceID,
+			},
+		},
+		"autoNormalize":   true,
+		"rescanIntervalS": 3600,
+	}
+
+	return sc.postConfig("folders", payload)
+}
+
 // AddDevice adds a device to Syncthing
 func (sc *SyncthingClient) AddDevice(deviceID, deviceName string) error {
 	payload := map[string]interface{}{

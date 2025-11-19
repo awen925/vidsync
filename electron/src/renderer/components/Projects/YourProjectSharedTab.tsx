@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Button,
@@ -15,10 +15,24 @@ import {
   TextField,
   Alert,
   IconButton,
+  CircularProgress,
+  Chip,
 } from '@mui/material';
-import { LinkIcon, Users, Copy, Check } from 'lucide-react';
+import { LinkIcon, Users, Copy, Check, Loader } from 'lucide-react';
+import { cloudAPI } from '../../hooks/useCloudApi';
+
+interface InvitedUser {
+  type: 'invited' | 'member';
+  email?: string;
+  userId?: string;
+  role?: string;
+  status?: string;
+  invitedAt?: string;
+  joinedAt?: string;
+}
 
 interface YourProjectSharedTabProps {
+  projectId?: string;
   inviteCode: string;
   copiedCode: boolean;
   shareEmail: string;
@@ -29,6 +43,7 @@ interface YourProjectSharedTabProps {
 }
 
 const YourProjectSharedTab: React.FC<YourProjectSharedTabProps> = ({
+  projectId,
   inviteCode,
   copiedCode,
   shareEmail,
@@ -37,29 +52,87 @@ const YourProjectSharedTab: React.FC<YourProjectSharedTabProps> = ({
   onCopyInvite,
   onShareEmailChange,
 }) => {
+  const [invitedUsers, setInvitedUsers] = useState<InvitedUser[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (projectId) {
+      fetchInvitedUsers();
+    }
+  }, [projectId]);
+
+  const fetchInvitedUsers = async () => {
+    if (!projectId) return;
+    
+    setLoading(true);
+    try {
+      const response = await cloudAPI.get(`/projects/${projectId}/invited-users`);
+      const allUsers = [
+        ...(response.data.invited || []),
+        ...(response.data.members || []),
+      ];
+      setInvitedUsers(allUsers);
+    } catch (error) {
+      console.error('Failed to fetch invited users:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
   return (
     <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'auto', p: 2 }}>
       {/* Members Table Section */}
       <Box sx={{ mb: 3 }}>
         <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 2 }}>
-          Project Members
+          Project Members & Invited Users
         </Typography>
         <TableContainer component={Paper} elevation={0} sx={{ mb: 2, border: 1, borderColor: 'divider' }}>
           <Table>
             <TableHead>
               <TableRow sx={{ bgcolor: 'action.hover' }}>
-                <TableCell>Name</TableCell>
-                <TableCell>Email</TableCell>
+                <TableCell>Email/User</TableCell>
                 <TableCell>Role</TableCell>
-                <TableCell align="right">Actions</TableCell>
+                <TableCell>Status</TableCell>
+                <TableCell align="right">Joined/Invited</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              <TableRow>
-                <TableCell colSpan={4} sx={{ py: 3, textAlign: 'center', color: 'text.secondary' }}>
-                  No members have joined this project yet. Share an invite code to add collaborators.
-                </TableCell>
-              </TableRow>
+              {loading ? (
+                <TableRow>
+                  <TableCell colSpan={4} sx={{ py: 3, textAlign: 'center' }}>
+                    <CircularProgress size={24} />
+                  </TableCell>
+                </TableRow>
+              ) : invitedUsers.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={4} sx={{ py: 3, textAlign: 'center', color: 'text.secondary' }}>
+                    No members or invites yet. Share an invite code to add collaborators.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                invitedUsers.map((user, idx) => (
+                  <TableRow key={idx}>
+                    <TableCell>{user.email || user.userId || 'Unknown'}</TableCell>
+                    <TableCell>
+                      <Chip 
+                        label={user.role || 'Viewer'} 
+                        size="small" 
+                        variant="outlined"
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <Chip
+                        label={user.status || 'Pending'}
+                        size="small"
+                        color={user.status === 'accepted' ? 'success' : 'default'}
+                        variant={user.status === 'accepted' ? 'filled' : 'outlined'}
+                      />
+                    </TableCell>
+                    <TableCell align="right" sx={{ fontSize: '0.85rem', color: 'text.secondary' }}>
+                      {user.joinedAt ? new Date(user.joinedAt).toLocaleDateString() : (user.invitedAt ? new Date(user.invitedAt).toLocaleDateString() : '-')}
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
             </TableBody>
           </Table>
         </TableContainer>

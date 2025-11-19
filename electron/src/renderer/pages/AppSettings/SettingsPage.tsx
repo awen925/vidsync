@@ -18,9 +18,11 @@ import {
   MenuItem,
   Stack,
   Alert,
+  InputAdornment,
 } from '@mui/material';
-import { Settings, Bell, Sliders, Check } from 'lucide-react';
+import { Settings, Bell, Sliders, Check, Folder } from 'lucide-react';
 import { useAppTheme } from '../../theme/AppThemeProvider';
+import { cloudAPI } from '../../hooks/useCloudApi';
 
 type SettingsTab = 'general' | 'preferences' | 'notifications';
 
@@ -72,8 +74,27 @@ const SettingsPage: React.FC = () => {
     }));
   }, [mode]);
 
+  // Load settings from backend
+  useEffect(() => {
+    const fetchSettings = async () => {
+      try {
+        const response = await cloudAPI.get('/users/settings');
+        const settings = response.data.settings;
+        if (settings.defaultDownloadPath) {
+          setDefaultDownloadPath(settings.defaultDownloadPath);
+        }
+      } catch (error) {
+        console.error('Failed to fetch settings:', error);
+      }
+    };
+
+    fetchSettings();
+  }, []);
+
   const [language, setLanguage] = useState('en');
   const [defaultSyncInterval, setDefaultSyncInterval] = useState(30);
+  const [defaultDownloadPath, setDefaultDownloadPath] = useState('~/downloads/vidsync');
+  const [downloadPathSaving, setDownloadPathSaving] = useState(false);
 
   const handleNotificationChange = (key: keyof NotificationSettings) => {
     setNotifications(prev => ({ ...prev, [key]: !prev[key] }));
@@ -86,6 +107,33 @@ const SettingsPage: React.FC = () => {
     
     if (key === 'theme') {
       setMode(value as 'light' | 'dark' | 'auto');
+    }
+  };
+
+  const handleBrowseDownloadPath = async () => {
+    try {
+      const path = await (window as any).api?.openDirectory();
+      if (path) {
+        setDefaultDownloadPath(path);
+        setSaved(false);
+      }
+    } catch (error) {
+      console.error('Failed to browse directory:', error);
+    }
+  };
+
+  const saveDownloadPath = async () => {
+    setDownloadPathSaving(true);
+    try {
+      await cloudAPI.put('/users/settings', {
+        defaultDownloadPath: defaultDownloadPath,
+      });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (error) {
+      console.error('Failed to save download path:', error);
+    } finally {
+      setDownloadPathSaving(false);
     }
   };
 
@@ -190,6 +238,47 @@ const SettingsPage: React.FC = () => {
                   </Box>
                   <Button disableRipple variant="outlined" fullWidth>
                     Clear Cache
+                  </Button>
+                </Stack>
+              </SettingSection>
+
+              <SettingSection title="Default Download Path">
+                <Stack spacing={2}>
+                  <TextField
+                    fullWidth
+                    value={defaultDownloadPath}
+                    onChange={(e) => {
+                      setDefaultDownloadPath(e.target.value);
+                      setSaved(false);
+                    }}
+                    placeholder="~/downloads/vidsync"
+                    size="small"
+                    variant="outlined"
+                    InputProps={{
+                      endAdornment: (
+                        <InputAdornment position="end">
+                          <Button
+                            size="small"
+                            onClick={handleBrowseDownloadPath}
+                            startIcon={<Folder size={16} />}
+                            sx={{ textTransform: 'none' }}
+                          >
+                            Browse
+                          </Button>
+                        </InputAdornment>
+                      ),
+                    }}
+                  />
+                  <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                    Files will be downloaded to this location by default. You can also override this per project.
+                  </Typography>
+                  <Button
+                    variant="contained"
+                    size="small"
+                    onClick={saveDownloadPath}
+                    disabled={downloadPathSaving}
+                  >
+                    {downloadPathSaving ? 'Saving...' : 'Save Path'}
                   </Button>
                 </Stack>
               </SettingSection>

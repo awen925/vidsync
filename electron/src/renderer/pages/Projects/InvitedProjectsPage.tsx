@@ -12,11 +12,9 @@ import {
   Typography,
   Stack,
 } from '@mui/material';
-import { Folder } from 'lucide-react';
 import { cloudAPI } from '../../hooks/useCloudApi';
 import InvitedProjectsList from '../../components/InvitedProjectsList';
-import InvitedProjectHeader from '../../components/InvitedProjectHeader';
-import { ProjectFilesPage } from '../../components/ProjectFilesPage';
+import InvitedProjectDetailView from '../../components/InvitedProjectDetailView';
 
 interface InvitedProject {
   id: string;
@@ -37,8 +35,6 @@ const InvitedProjectsPage: React.FC<InvitedProjectsPageProps> = ({ onSelectProje
   const [projects, setProjects] = useState<InvitedProject[]>([]);
   const [selectedProject, setSelectedProject] = useState<InvitedProject | null>(null);
   const [loading, setLoading] = useState(false);
-  const [pauseConfirmOpen, setPauseConfirmOpen] = useState(false);
-  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [joinDialogOpen, setJoinDialogOpen] = useState(false);
   const [inviteToken, setInviteToken] = useState('');
   const [joinLoading, setJoinLoading] = useState(false);
@@ -68,53 +64,6 @@ const InvitedProjectsPage: React.FC<InvitedProjectsPageProps> = ({ onSelectProje
       console.error('Failed to fetch invited projects:', error);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handlePauseSync = () => {
-    setPauseConfirmOpen(true);
-  };
-
-  const handleConfirmPause = async () => {
-    if (!selectedProject) return;
-    try {
-      await cloudAPI.post(`/projects/${selectedProject.id}/pause-sync`, {});
-      setPauseConfirmOpen(false);
-      await fetchInvitedProjects();
-    } catch (error) {
-      console.error('Failed to pause sync:', error);
-    }
-  };
-
-  const handleResumeSync = async () => {
-    if (!selectedProject) return;
-    try {
-      await cloudAPI.post(`/projects/${selectedProject.id}/resume-sync`, {});
-      await fetchInvitedProjects();
-    } catch (error) {
-      console.error('Failed to resume sync:', error);
-    }
-  };
-
-  const handleDeleteProject = () => {
-    setDeleteConfirmOpen(true);
-  };
-
-  const handleConfirmDelete = async () => {
-    if (!selectedProject) return;
-    try {
-      try {
-        await (window as any).api.syncthingRemoveProjectFolder(selectedProject.id);
-      } catch (syncError) {
-        console.warn('Failed to remove from Syncthing:', syncError);
-      }
-
-      await cloudAPI.delete(`/projects/${selectedProject.id}`);
-      setDeleteConfirmOpen(false);
-      setSelectedProject(null);
-      await fetchInvitedProjects();
-    } catch (error) {
-      console.error('Failed to delete project:', error);
     }
   };
 
@@ -170,53 +119,19 @@ const InvitedProjectsPage: React.FC<InvitedProjectsPageProps> = ({ onSelectProje
         loading={loading}
       />
 
-      {/* Right Panel - Project Details & Files */}
+      {/* Right Panel - Project Details & File Tree */}
       <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {selectedProject ? (
-          <>
-            {/* Project Header */}
-            <InvitedProjectHeader
-              project={selectedProject}
-              onPauseSync={handlePauseSync}
-              onResumeSync={handleResumeSync}
-              onDelete={handleDeleteProject}
-            />
-
-            {/* Files Section */}
-            <Box sx={{ flex: 1, overflow: 'auto' }}>
-              <ProjectFilesPage projectId={selectedProject.id} isOwner={false} />
-            </Box>
-          </>
+          <InvitedProjectDetailView
+            project={selectedProject}
+            onProjectUpdated={fetchInvitedProjects}
+          />
         ) : (
           <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flex: 1 }}>
             <Typography sx={{ color: 'text.secondary' }}>Select a project from the list</Typography>
           </Box>
         )}
       </Box>
-
-      {/* Pause Sync Confirmation */}
-      <Dialog open={pauseConfirmOpen} onClose={() => setPauseConfirmOpen(false)}>
-        <DialogTitle>Pause Sync?</DialogTitle>
-        <DialogContent>
-          <Typography>Pausing will stop receiving files. You can resume later.</Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button disableRipple onClick={() => setPauseConfirmOpen(false)}>Cancel</Button>
-          <Button disableRipple variant="contained" onClick={handleConfirmPause}>Pause</Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* Delete Confirmation */}
-      <Dialog open={deleteConfirmOpen} onClose={() => setDeleteConfirmOpen(false)}>
-        <DialogTitle>Remove Project?</DialogTitle>
-        <DialogContent>
-          <Typography>This will remove the project and stop receiving files. This action cannot be undone.</Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button disableRipple onClick={() => setDeleteConfirmOpen(false)}>Cancel</Button>
-          <Button disableRipple variant="contained" color="error" onClick={handleConfirmDelete}>Remove</Button>
-        </DialogActions>
-      </Dialog>
 
       {/* Join Project Dialog */}
       <Dialog open={joinDialogOpen} onClose={handleCloseJoinDialog} maxWidth="sm" fullWidth>
