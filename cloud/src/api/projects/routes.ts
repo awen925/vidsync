@@ -36,6 +36,9 @@ function setCachedSyncStatus(projectId: string, data: any, ttlMs: number = 5000)
 
 // POST /api/projects
 router.post('/', authMiddleware, async (req: Request, res: Response) => {
+  const startTime = Date.now();
+  let projectId: string | null = null;
+  
   try {
     const { name, description, local_path, auto_sync } = req.body;
     const ownerId = (req as any).user.id;
@@ -44,7 +47,7 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
 
     // Check for duplicate: same local_path for same owner (if local_path provided)
     if (local_path && local_path.trim().length > 0) {
-      console.log(`[Project] Checking for duplicate project with local_path: ${local_path}`);
+      console.log(`[Project:${name}] Checking for duplicate project with local_path: ${local_path}`);
 
       // Check if a project with same local_path already exists for this owner
       const { data: existingProjects, error: dupErr } = await supabase
@@ -53,11 +56,9 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
         .eq('owner_id', ownerId)
         .eq('local_path', local_path);
 
-      console.log(`[Project] Duplicate check result:`, { existingCount: existingProjects?.length || 0, error: dupErr });
-
       if (!dupErr && existingProjects && existingProjects.length > 0) {
         const existing = existingProjects[0];
-        console.log(`[Project] ⚠️  Duplicate found: ${existing.name} (${existing.id})`);
+        console.log(`[Project:${name}] ⚠️  Duplicate found: ${existing.name} (${existing.id})`);
         return res.status(409).json({
           error: `Project with path "${local_path}" already exists as "${existing.name}"`,
           code: 'DUPLICATE_PROJECT_PATH',
@@ -75,158 +76,178 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
       auto_sync: typeof auto_sync === 'boolean' ? auto_sync : true,
     };
 
-    console.log(`[Project] Creating new project:`, { name, local_path, ownerId });
+    console.log(`[Project:${name}] Step 1: Creating project in database...`);
 
     const { data, error } = await supabase.from('projects').insert(payload).select().single();
 
     if (error) {
-      console.error('Failed to create project:', error.message);
+      console.error(`[Project:${name}] ✗ Failed to create project in DB: ${error.message}`);
       return res.status(500).json({ error: 'Failed to create project' });
     }
 
-    // Try to create Syncthing folder (optional - fails gracefully)
-    try {
-      // Get owner's primary device with Syncthing ID
-      const { data: devices, error: devErr } = await supabase
-        .from('devices')
-        .select('syncthing_id')
-        .eq('user_id', ownerId)
-        .limit(1);
+    projectId = data.id;
+    console.log(`[Project:${projectId}] ✅ Step 1: Project created in DB`);
 
-      if (!devErr && devices && devices.length > 0 && devices[0].syncthing_id) {
-        const syncthingService = new SyncthingService(
-          process.env.SYNCTHING_API_KEY || '',
-          process.env.SYNCTHING_HOST || 'localhost',
-          parseInt(process.env.SYNCTHING_PORT || '8384')
-        );
+    // Initialize SyncthingService early (always needed for checking/waiting)
+    const syncConfig = getSyncthingConfig();
+    const syncthingService = new SyncthingService(
+      syncConfig.apiKey,
+      syncConfig.host,
+      syncConfig.port
+    );
 
-        // Use project UUID as the Syncthing folder ID
+    // Get owner's primary device with Syncthing ID
+    console.log(`[Project:${projectId}] Step 2: Getting device info...`);
+    const { data: devices, error: devErr } = await supabase
+      .from('devices')
+      .select('syncthing_id')
+      .eq('user_id', ownerId)
+      .limit(1);
+
+    const hasDevice = !devErr && devices && devices.length > 0 && devices[0].syncthing_id;
+    if (hasDevice) {
+      const deviceId = devices[0].syncthing_id as string;
+      console.log(`[Project:${projectId}] ✅ Step 2: Device found (${deviceId})`);
+
+      // Step 3: Create Syncthing folder (only if we have a device)
+      console.log(`[Project:${projectId}] Step 3: Sending folder create request to Syncthing...`);
+      try {
         await syncthingService.createFolder(
-          data.id,
+          projectId as string,
           name,
-          local_path || `/tmp/vidsync/${data.id}`,
-          devices[0].syncthing_id
+          local_path || `/tmp/vidsync/${projectId}`,
+          deviceId
         );
-
-        console.log(`Auto-created Syncthing folder for project ${data.id}`);
+        console.log(`[Project:${projectId}] ✅ Step 3: Folder create request sent`);
+      } catch (createErr: any) {
+        console.error(`[Project:${projectId}] ✗ Failed to create Syncthing folder: ${createErr.message}`);
+        throw new Error(`Syncthing folder creation failed: ${createErr.message}`);
       }
-    } catch (syncErr) {
-      console.warn(`Failed to auto-create Syncthing folder: ${syncErr}`);
-      // Continue anyway - user can sync manually later
+    } else {
+      console.warn(`[Project:${projectId}] ⚠️  No device found in DB, skipping folder create (but folder may already exist in Syncthing)`);
+      console.log(`[Project:${projectId}] Step 3: Skipped (no device)`);
     }
 
-    // Generate initial snapshot ASYNCHRONOUSLY (don't block response)
-    // Wait for Syncthing folder to be created and indexed
-    (async () => {
-      try {
-        console.log(`[Project] Starting async snapshot generation for ${data.id}`);
-        
-        // Get Syncthing config
-        let syncConfig;
-        try {
-          syncConfig = getSyncthingConfig();
-        } catch (err) {
-          console.warn(`[Project] Failed to get Syncthing config: ${err}`);
-          return;
-        }
-
-        // Initialize SyncthingService
-        const syncthingService = new SyncthingService(
-          syncConfig.apiKey,
-          syncConfig.host,
-          syncConfig.port
-        );
-
-        // First: Wait for Syncthing to finish scanning the folder
-        // This uses the /rest/events endpoint to listen for LocalIndexUpdated
-        try {
-          console.log(`[Project] Waiting for Syncthing to scan folder ${data.id}...`);
-          await syncthingService.waitForFolderScanned(data.id, 60000); // Wait up to 60 seconds
-          console.log(`[Project] ✅ Folder scan complete for ${data.id}`);
-        } catch (scanWaitErr) {
-          console.warn(`[Project] Warning: Timeout or error waiting for scan: ${scanWaitErr}`);
-          // Continue anyway - folder might be ready even if event didn't fire
-        }
-
-        // Second: Fetch the file list after scan is complete
-        let syncFiles = null;
-        let lastError = null;
-        const maxRetries = 3; // Now we only need 3 retries since scan is done
-        const retryDelays = [500, 1000, 2000]; // Much shorter delays: 0.5s, 1s, 2s
-
-        for (let attempt = 0; attempt < maxRetries; attempt++) {
-          try {
-            // Wait before attempting
-            await new Promise(resolve => setTimeout(resolve, retryDelays[attempt]));
-            
-            console.log(`[Project] Attempt ${attempt + 1}/${maxRetries} to fetch files for ${data.id}`);
-            
-            syncFiles = await syncthingService.getFolderFiles(data.id, 10);
-            console.log(`[Project] ✅ Successfully fetched files on attempt ${attempt + 1}`);
-            break; // Success, exit retry loop
-          } catch (err: any) {
-            lastError = err;
-            const errorMsg = err.message || String(err);
-            
-            // Check if we should retry
-            const shouldRetry = 
-              errorMsg.includes('no such folder') ||
-              errorMsg.includes('ECONNREFUSED') ||
-              errorMsg.includes('ETIMEDOUT') ||
-              errorMsg.includes('socket hang up');
-            
-            if (shouldRetry) {
-              // Retryable error, wait and try again
-              console.warn(`[Project] Retryable error (attempt ${attempt + 1}): ${errorMsg}`);
-              if (attempt === maxRetries - 1) {
-                // Last attempt failed
-                throw new Error(`Failed after ${maxRetries} attempts: ${errorMsg}`);
-              }
-              // Continue to next iteration
-            } else {
-              // Non-retryable error, fail immediately
-              throw err;
-            }
-          }
-        }
-
-        if (!syncFiles) {
-          throw lastError || new Error('Failed to fetch files: unknown error');
-        }
-
-        console.log(`[Project] Retrieved ${syncFiles.length} files from Syncthing for ${data.id}`);
-
-        if (syncFiles.length > 0) {
-          // Convert to snapshot format
-          const snapshotFiles: Array<{
-            path: string;
-            name: string;
-            type: 'file' | 'folder';
-            size: number;
-            hash: string;
-            modifiedAt: string;
-          }> = syncFiles.map(f => ({
-            path: f.path,
-            name: f.name,
-            type: f.type === 'file' ? 'file' : 'folder',
-            size: f.size,
-            hash: '',
-            modifiedAt: f.modTime,
-          }));
-
-          // Save snapshot to Supabase Storage
-          await FileMetadataService.saveSnapshot(data.id, name, snapshotFiles);
-          console.log(`[Project] ✅ Saved initial snapshot for ${data.id} with ${snapshotFiles.length} files`);
-        } else {
-          console.log(`[Project] Syncthing folder is empty for ${data.id} (files will appear after syncing)`);
-        }
-      } catch (err) {
-        console.warn(`[Project] Failed to generate initial snapshot after retries: ${err}`);
-        // Continue anyway - snapshot can be generated later on demand via /files-list
+    // Step 4: Verify folder exists in Syncthing (critical!)
+    console.log(`[Project:${projectId}] Step 4: Verifying folder exists in Syncthing...`);
+    const folderExists = await syncthingService.verifyFolderExists(projectId as string, 10000);
+    if (!folderExists) {
+      console.error(`[Project:${projectId}] ✗ Folder verification failed - folder not found in Syncthing`);
+      // If no device was in DB and folder doesn't exist, return project but warn user
+      if (!hasDevice) {
+        console.warn(`[Project:${projectId}] ⚠️  No device configured and folder not in Syncthing - returning project without snapshot`);
+        return res.status(201).json({ 
+          project: data,
+          warning: 'No device found and folder does not exist in Syncthing - folder creation skipped'
+        });
       }
-    })();
+      // If we tried to create it and it still doesn't exist, that's an error
+      throw new Error('Folder creation verification failed');
+    }
+    console.log(`[Project:${projectId}] ✅ Step 4: Folder verified to exist in Syncthing`);
 
-    res.status(201).json({ project: data });
+    // Step 5: Wait for folder to be known (event-based, more reliable than scan)
+    console.log(`[Project:${projectId}] Step 5: Waiting for folder to be known to Syncthing...`);
+    try {
+      await syncthingService.waitForFolderKnown(projectId as string, 30000);
+      console.log(`[Project:${projectId}] ✅ Step 5: Folder is known to Syncthing`);
+    } catch (knownErr) {
+      console.warn(`[Project:${projectId}] ⚠️  Warning: Timeout waiting for folder to be known: ${knownErr}`);
+      // Continue anyway - folder might still be usable
+    }
+
+    // Step 6: Wait for index scan to complete (LocalIndexUpdated event)
+    console.log(`[Project:${projectId}] Step 6: Waiting for folder to be indexed...`);
+    try {
+      await syncthingService.waitForFolderScanned(projectId as string, 120000); // 2 minutes for large folders
+      console.log(`[Project:${projectId}] ✅ Step 6: Folder indexing complete`);
+    } catch (scanErr) {
+      console.warn(`[Project:${projectId}] ⚠️  Warning: Timeout waiting for index scan: ${scanErr}`);
+      // Continue anyway - we can fetch files without waiting for full scan
+    }
+
+    // Step 7: Fetch file list
+    console.log(`[Project:${projectId}] Step 7: Fetching file list from Syncthing...`);
+    let syncFiles = null;
+    const maxRetries = 5;
+    const retryDelays = [500, 1000, 2000, 3000, 5000];
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        await new Promise(resolve => setTimeout(resolve, retryDelays[attempt]));
+        
+        console.log(`[Project:${projectId}] Step 7: Attempt ${attempt + 1}/${maxRetries} to fetch files...`);
+        syncFiles = await syncthingService.getFolderFiles(projectId as string, 10);
+        console.log(`[Project:${projectId}] ✅ Step 7: Files fetched (${syncFiles.length} items)`);
+        break;
+      } catch (err: any) {
+        const errorMsg = err.message || String(err);
+        const shouldRetry = 
+          errorMsg.includes('no such folder') ||
+          errorMsg.includes('ECONNREFUSED') ||
+          errorMsg.includes('ETIMEDOUT') ||
+          errorMsg.includes('socket hang up');
+        
+        if (shouldRetry && attempt < maxRetries - 1) {
+          console.warn(`[Project:${projectId}] ⚠️  Retryable error (attempt ${attempt + 1}): ${errorMsg}`);
+        } else if (attempt === maxRetries - 1) {
+          console.error(`[Project:${projectId}] ✗ Failed after ${maxRetries} attempts: ${errorMsg}`);
+          throw err;
+        }
+      }
+    }
+
+    if (!syncFiles) {
+      throw new Error('Failed to fetch files after all retries');
+    }
+
+    // Step 8: Generate and save snapshot
+    console.log(`[Project:${projectId}] Step 8: Generating snapshot...`);
+    if (syncFiles.length > 0) {
+      const snapshotFiles: Array<{
+        path: string;
+        name: string;
+        type: 'file' | 'folder';
+        size: number;
+        hash: string;
+        modifiedAt: string;
+      }> = syncFiles.map(f => ({
+        path: f.path,
+        name: f.name,
+        type: f.type === 'file' ? 'file' : 'folder',
+        size: f.size,
+        hash: '',
+        modifiedAt: f.modTime,
+      }));
+
+      await FileMetadataService.saveSnapshot(projectId as string, name, snapshotFiles);
+      console.log(`[Project:${projectId}] ✅ Step 8: Snapshot saved (${snapshotFiles.length} files)`);
+    } else {
+      console.log(`[Project:${projectId}] Step 8: No files to snapshot (folder is empty)`);
+    }
+
+    // Step 9: Update project with snapshot info
+    console.log(`[Project:${projectId}] Step 9: Updating project record with snapshot URL...`);
+    const snapshotUrl = `${process.env.SUPABASE_URL}/storage/v1/object/public/snapshots/${projectId}-snapshot.json.gz`;
+    const { data: updated } = await supabase
+      .from('projects')
+      .update({
+        snapshot_url: snapshotUrl,
+        snapshot_generated_at: new Date().toISOString(),
+      })
+      .eq('id', projectId)
+      .select()
+      .single();
+    console.log(`[Project:${projectId}] ✅ Step 9: Project record updated`);
+
+    const elapsed = Date.now() - startTime;
+    console.log(`[Project:${projectId}] 🎉 CREATION COMPLETE in ${elapsed}ms`);
+
+    res.status(201).json({ 
+      project: updated || data,
+      creationTimeMs: elapsed,
+      filesCount: syncFiles?.length || 0
+    });
   } catch (error) {
     console.error('Create project exception:', error);
     res.status(500).json({ error: 'Failed to create project' });
@@ -1532,16 +1553,20 @@ router.put('/:projectId/refresh-snapshot', authMiddleware, async (req: Request, 
  * Trigger Syncthing to start syncing to member's device
  */
 router.post('/:projectId/sync-start', authMiddleware, async (req: Request, res: Response) => {
-  try {
-    const { projectId } = req.params;
-    const { deviceId, syncthingApiKey } = req.body;
-    const userId = (req as any).user.id;
+  const startTime = Date.now();
+  const { projectId } = req.params;
+  const { deviceId, syncthingApiKey } = req.body;
+  const userId = (req as any).user.id;
 
+  try {
     if (!deviceId || !syncthingApiKey) {
       return res.status(400).json({ error: 'deviceId and syncthingApiKey required' });
     }
 
+    console.log(`[Sync:${projectId}] Starting sync lifecycle for device ${deviceId}`);
+
     // Verify user is owner (only owner can start syncs)
+    console.log(`[Sync:${projectId}] Step 1: Verifying project ownership...`);
     const { data: project } = await supabase
       .from('projects')
       .select('owner_id, name, local_path')
@@ -1549,34 +1574,81 @@ router.post('/:projectId/sync-start', authMiddleware, async (req: Request, res: 
       .single();
 
     if (!project) {
+      console.error(`[Sync:${projectId}] ✗ Project not found`);
       return res.status(404).json({ error: 'Project not found' });
     }
 
     if (project.owner_id !== userId) {
+      console.error(`[Sync:${projectId}] ✗ User is not project owner`);
       return res.status(403).json({ error: 'Only project owner can start sync' });
     }
 
     if (!project.local_path) {
+      console.error(`[Sync:${projectId}] ✗ Project has no local_path configured`);
       return res.status(400).json({ error: 'Project has no local_path configured' });
     }
+
+    console.log(`[Sync:${projectId}] ✅ Step 1: Project verified (${project.name})`);
 
     // Initialize Syncthing service
     const syncthingService = new SyncthingService(syncthingApiKey);
 
-    // Test connection
+    // Step 2: Test connection to Syncthing
+    console.log(`[Sync:${projectId}] Step 2: Testing connection to Syncthing...`);
     const isConnected = await syncthingService.testConnection();
     if (!isConnected) {
+      console.error(`[Sync:${projectId}] ✗ Cannot connect to Syncthing service`);
       return res.status(503).json({ error: 'Cannot connect to Syncthing service' });
     }
+    console.log(`[Sync:${projectId}] ✅ Step 2: Connected to Syncthing`);
 
-    // Add device to folder (enable syncing)
-    await syncthingService.addDeviceToFolder(projectId, deviceId);
+    // Step 3: Add device to folder (enable syncing)
+    console.log(`[Sync:${projectId}] Step 3: Adding device ${deviceId} to folder...`);
+    try {
+      await syncthingService.addDeviceToFolder(projectId, deviceId);
+      console.log(`[Sync:${projectId}] ✅ Step 3: Device added to folder`);
+    } catch (addErr: any) {
+      console.error(`[Sync:${projectId}] ✗ Failed to add device to folder: ${addErr.message}`);
+      throw new Error(`Failed to add device to folder: ${addErr.message}`);
+    }
 
-    // Trigger initial folder scan
-    await syncthingService.scanFolder(projectId);
+    // Step 4: Trigger initial folder scan
+    console.log(`[Sync:${projectId}] Step 4: Triggering folder scan...`);
+    try {
+      await syncthingService.scanFolder(projectId);
+      console.log(`[Sync:${projectId}] ✅ Step 4: Folder scan initiated`);
+    } catch (scanErr: any) {
+      console.warn(`[Sync:${projectId}] ⚠️  Warning scanning folder: ${scanErr.message}`);
+      // Don't fail here - scan might happen asynchronously
+    }
 
-    // Get folder status
+    // Step 5: Wait for device to be known in folder
+    console.log(`[Sync:${projectId}] Step 5: Waiting for device to be known in folder...`);
+    try {
+      await syncthingService.waitForFolderKnown(projectId, 30000);
+      console.log(`[Sync:${projectId}] ✅ Step 5: Device known in folder`);
+    } catch (knownErr) {
+      console.warn(`[Sync:${projectId}] ⚠️  Timeout waiting for folder to be known: ${knownErr}`);
+      // Continue anyway - might still sync
+    }
+
+    // Step 6: Wait for folder to be scanned (LocalIndexUpdated event)
+    console.log(`[Sync:${projectId}] Step 6: Waiting for folder index update...`);
+    try {
+      await syncthingService.waitForFolderScanned(projectId, 120000);
+      console.log(`[Sync:${projectId}] ✅ Step 6: Folder indexed`);
+    } catch (scanTimeoutErr) {
+      console.warn(`[Sync:${projectId}] ⚠️  Timeout waiting for folder index: ${scanTimeoutErr}`);
+      // Continue anyway - initial sync might still proceed
+    }
+
+    // Step 7: Get final folder status
+    console.log(`[Sync:${projectId}] Step 7: Retrieving folder status...`);
     const status = await syncthingService.getFolderStatus(projectId);
+    console.log(`[Sync:${projectId}] ✅ Step 7: Folder status retrieved`);
+
+    const elapsed = Date.now() - startTime;
+    console.log(`[Sync:${projectId}] 🎉 SYNC START COMPLETE in ${elapsed}ms`);
 
     res.json({
       success: true,
@@ -1585,9 +1657,11 @@ router.post('/:projectId/sync-start', authMiddleware, async (req: Request, res: 
       projectName: project.name,
       deviceId,
       folderStatus: status,
+      timeTaken: elapsed,
     });
   } catch (error) {
-    console.error('Sync-start exception:', error);
+    const elapsed = Date.now() - startTime;
+    console.error(`[Sync:${projectId}] ✗ SYNC START FAILED after ${elapsed}ms: ${(error as Error).message}`);
     res.status(500).json({ error: `Failed to start sync: ${(error as Error).message}` });
   }
 });

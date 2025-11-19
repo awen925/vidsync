@@ -48,6 +48,14 @@ contextBridge.exposeInMainWorld('api', {
   // Privilege helpers
   applySetcap: (binaryPath: string) => ipcRenderer.invoke('privilege:applySetcap', binaryPath),
   elevateSetcap: (binaryPath: string) => ipcRenderer.invoke('privilege:elevateSetcap', binaryPath),
+  // Snapshot cache
+  snapshotCache: {
+    getCached: (projectId: string) => ipcRenderer.invoke('snapshot:getCached', projectId),
+    downloadAndCache: (projectId: string, downloadUrl: string) => ipcRenderer.invoke('snapshot:downloadAndCache', projectId, downloadUrl),
+    clearProject: (projectId: string) => ipcRenderer.invoke('snapshot:clearProject', projectId),
+    clearAll: () => ipcRenderer.invoke('snapshot:clearAll'),
+    onProgress: (cb: (status: string, progress?: number) => void) => ipcRenderer.on('snapshot:progress', (_ev, status, progress) => cb(status, progress)),
+  },
   // Secure store wrappers
   secureStore: {
     setRefreshToken: (token: string) => ipcRenderer.invoke('secureStore:set', token),

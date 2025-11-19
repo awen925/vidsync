@@ -14,6 +14,7 @@ import {
   Typography,
   Paper,
   IconButton,
+  CircularProgress,
 } from '@mui/material';
 import { Trash2, LinkIcon, Copy, Check, AlertCircle } from 'lucide-react';
 import { cloudAPI } from '../../hooks/useCloudApi';
@@ -72,6 +73,8 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
   const [tabValue, setTabValue] = useState(0);
   const [shareEmail, setShareEmail] = useState('');
   const [shareEmailError, setShareEmailError] = useState('');
+  const [creatingProject, setCreatingProject] = useState(false);
+  const [creationStatus, setCreationStatus] = useState('');
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleteConfirmLoading, setDeleteConfirmLoading] = useState(false);
   const [duplicateErrorOpen, setDuplicateErrorOpen] = useState(false);
@@ -202,16 +205,31 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
 
   const handleCreateProject = async () => {
     if (!newProjectName.trim()) return;
+    setCreatingProject(true);
+    setCreationStatus('Creating project...');
     try {
+      setCreationStatus('Creating project in database...');
+      
+      // Add a small delay for the first status to be visible
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      setCreationStatus('Setting up Syncthing folder...');
+      
       const response = await cloudAPI.post('/projects', {
         name: newProjectName,
         description: newProjectDesc,
         local_path: newProjectLocalPath || null,
       });
 
+      setCreationStatus('Scanning project files...');
+      await new Promise(resolve => setTimeout(resolve, 200));
+
+      setCreationStatus('Collecting file metadata...');
+
       // If project has a local_path, initialize Syncthing for it
       if (response.data.project && newProjectLocalPath) {
         try {
+          setCreationStatus('Starting file synchronization...');
           await (window as any).api.syncthingStartForProject(response.data.project.id, newProjectLocalPath);
         } catch (syncError) {
           console.error('Failed to start Syncthing for project:', syncError);
@@ -219,13 +237,23 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
         }
       }
 
-      setCreateDialogOpen(false);
-      setNewProjectName('');
-      setNewProjectDesc('');
-      setNewProjectLocalPath('');
-      await fetchProjects();
+      setCreationStatus('Finalizing project setup...');
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      setCreationStatus('✓ Project created successfully!');
+      setTimeout(() => {
+        setCreateDialogOpen(false);
+        setCreatingProject(false);
+        setCreationStatus('');
+        setNewProjectName('');
+        setNewProjectDesc('');
+        setNewProjectLocalPath('');
+        fetchProjects();
+      }, 1500);
     } catch (error: any) {
       console.error('Failed to create project:', error);
+      setCreatingProject(false);
+      setCreationStatus('');
       
       // Check if this is a duplicate path error
       if (error.response?.status === 409 && error.response?.data?.code === 'DUPLICATE_PROJECT_PATH') {
@@ -405,50 +433,64 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
       </Box>
 
       {/* Create Project Dialog */}
-      <Dialog open={createDialogOpen} onClose={() => setCreateDialogOpen(false)} maxWidth="sm" fullWidth>
+      <Dialog open={createDialogOpen} onClose={() => !creatingProject && setCreateDialogOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle>Create New Project</DialogTitle>
         <DialogContent>
-          <Stack spacing={2} sx={{ pt: 2 }}>
-            <TextField
-              fullWidth
-              label="Project Name"
-              placeholder="Enter project name"
-              value={newProjectName}
-              onChange={(e) => setNewProjectName(e.target.value)}
-            />
-            <TextField
-              fullWidth
-              label="Description"
-              placeholder="Optional description"
-              value={newProjectDesc}
-              onChange={(e) => setNewProjectDesc(e.target.value)}
-              multiline
-              rows={2}
-            />
-            <Stack spacing={1}>
+          {creatingProject ? (
+            <Stack spacing={2} sx={{ pt: 2, justifyContent: 'center', alignItems: 'center', minHeight: 200 }}>
+              <CircularProgress size={40} />
+              <Typography variant="body1" sx={{ textAlign: 'center' }}>
+                {creationStatus}
+              </Typography>
+              <Typography variant="caption" sx={{ textAlign: 'center', color: 'text.secondary' }}>
+                This may take a moment while we set up your project and scan files...
+              </Typography>
+            </Stack>
+          ) : (
+            <Stack spacing={2} sx={{ pt: 2 }}>
               <TextField
                 fullWidth
-                label="Local Path (Optional)"
-                placeholder="Path to sync folder (e.g., /home/user/Videos)"
-                value={newProjectLocalPath}
-                onChange={(e) => setNewProjectLocalPath(e.target.value)}
-                helperText="If set, files will load instantly from your local folder"
+                label="Project Name"
+                placeholder="Enter project name"
+                value={newProjectName}
+                onChange={(e) => setNewProjectName(e.target.value)}
               />
-              <Button
-                disableRipple
-                variant="outlined"
-                size="small"
-                onClick={handleBrowseLocalPath}
-                sx={{ alignSelf: 'flex-start' }}
-              >
-                Browse Folder
-              </Button>
+              <TextField
+                fullWidth
+                label="Description"
+                placeholder="Optional description"
+                value={newProjectDesc}
+                onChange={(e) => setNewProjectDesc(e.target.value)}
+                multiline
+                rows={2}
+              />
+              <Stack spacing={1}>
+                <TextField
+                  fullWidth
+                  label="Local Path (Optional)"
+                  placeholder="Path to sync folder (e.g., /home/user/Videos)"
+                  value={newProjectLocalPath}
+                  onChange={(e) => setNewProjectLocalPath(e.target.value)}
+                  helperText="If set, files will load instantly from your local folder"
+                />
+                <Button
+                  disableRipple
+                  variant="outlined"
+                  size="small"
+                  onClick={handleBrowseLocalPath}
+                  sx={{ alignSelf: 'flex-start' }}
+                >
+                  Browse Folder
+                </Button>
+              </Stack>
             </Stack>
-          </Stack>
+          )}
         </DialogContent>
         <DialogActions>
-          <Button disableRipple onClick={() => setCreateDialogOpen(false)}>Cancel</Button>
-          <Button disableRipple variant="contained" onClick={handleCreateProject}>Create</Button>
+          <Button disableRipple onClick={() => !creatingProject && setCreateDialogOpen(false)} disabled={creatingProject}>Cancel</Button>
+          <Button disableRipple variant="contained" onClick={handleCreateProject} disabled={creatingProject}>
+            {creatingProject ? 'Creating...' : 'Create'}
+          </Button>
         </DialogActions>
       </Dialog>
 

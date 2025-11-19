@@ -698,6 +698,166 @@ export class SyncthingService {
     }
   }
 
+  // Verify folder was actually created and exists in Syncthing
+  // This ensures the folder is real before we proceed
+  async verifyFolderExists(folderId: string, timeoutMs: number = 10000): Promise<boolean> {
+    const startTime = Date.now();
+    const interval = 200; // Poll every 200ms
+
+    while (Date.now() - startTime < timeoutMs) {
+      try {
+        const folder = await this.getFolder(folderId);
+        if (folder && folder.id === folderId) {
+          console.log(`[SyncthingService] ✅ Verified folder ${folderId} exists in Syncthing`);
+          return true;
+        }
+      } catch (err: any) {
+        const errorMsg = err.message || String(err);
+        if (!errorMsg.includes('404') && !errorMsg.includes('not found')) {
+          // Non-404 error, log it
+          console.debug(`[SyncthingService] Verification attempt - ${errorMsg}`);
+        }
+        // 404 means folder not yet created, continue polling
+      }
+
+      // Wait before next attempt
+      await new Promise((resolve) => setTimeout(resolve, interval));
+    }
+
+    console.error(`[SyncthingService] ✗ Timeout verifying folder ${folderId} (${timeoutMs}ms)`);
+    return false;
+  }
+
+  // Wait for RemoteFolderSummary event (indicates folder is known to exist)
+  // This is more reliable than checking folder config
+  async waitForFolderKnown(folderId: string, timeoutMs: number = 30000): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const protocol = this.protocol === 'https' ? https : http;
+      let isResolved = false;
+      let eventCount = 0;
+
+      const timeout = setTimeout(() => {
+        if (!isResolved) {
+          isResolved = true;
+          req.destroy();
+          console.warn(`[SyncthingService] Timeout waiting for folder ${folderId} to be known (${timeoutMs}ms, ${eventCount} events received)`);
+          reject(new Error(`Timeout waiting for folder ${folderId} to be known`));
+        }
+      }, timeoutMs);
+
+      const options = {
+        hostname: this.host,
+        port: this.port,
+        path: '/rest/events?since=0',
+        method: 'GET',
+        headers: {
+          'X-API-Key': this.apiKey,
+          'Connection': 'keep-alive',
+          'Cache-Control': 'no-cache',
+        },
+        rejectUnauthorized: false,
+      };
+
+      console.log(`[SyncthingService] Listening for RemoteFolderSummary/LocalFolderSummary event for ${folderId}...`);
+
+      const req = protocol.request(options, (res) => {
+        let buffer = '';
+
+        res.on('data', (chunk: Buffer) => {
+          buffer += chunk.toString();
+
+          while (buffer.length > 0) {
+            const trimmed = buffer.trimStart();
+            
+            if (trimmed.startsWith('[') || trimmed.startsWith(']') || trimmed.startsWith(',')) {
+              buffer = trimmed.substring(1);
+              continue;
+            }
+
+            if (trimmed.startsWith('{')) {
+              let braceCount = 0;
+              let endIndex = -1;
+
+              for (let i = 0; i < trimmed.length; i++) {
+                if (trimmed[i] === '{') braceCount++;
+                if (trimmed[i] === '}') braceCount--;
+                if (braceCount === 0) {
+                  endIndex = i;
+                  break;
+                }
+              }
+
+              if (endIndex === -1) {
+                break;
+              }
+
+              const jsonStr = trimmed.substring(0, endIndex + 1);
+              buffer = trimmed.substring(endIndex + 1);
+
+              try {
+                const event = JSON.parse(jsonStr);
+                eventCount++;
+
+                // Check for folder-related events
+                if ((event.type === 'RemoteFolderSummary' || event.type === 'LocalFolderSummary') && 
+                    event.data?.folder === folderId) {
+                  console.log(`[SyncthingService] ✅ Folder ${folderId} is known to Syncthing (event: ${event.type})`);
+                  if (!isResolved) {
+                    isResolved = true;
+                    clearTimeout(timeout);
+                    req.destroy();
+                    resolve();
+                  }
+                  return;
+                }
+
+                // Also accept LocalIndexUpdated as indication folder exists
+                if (event.type === 'LocalIndexUpdated' && event.data?.folder === folderId) {
+                  console.log(`[SyncthingService] ✅ Folder ${folderId} exists (LocalIndexUpdated received)`);
+                  if (!isResolved) {
+                    isResolved = true;
+                    clearTimeout(timeout);
+                    req.destroy();
+                    resolve();
+                  }
+                  return;
+                }
+              } catch (parseErr) {
+                console.debug(`[SyncthingService] Could not parse event`);
+              }
+            } else {
+              buffer = trimmed.substring(1);
+            }
+          }
+        });
+
+        res.on('end', () => {
+          if (!isResolved) {
+            clearTimeout(timeout);
+            reject(new Error(`Event stream closed before folder ${folderId} became known`));
+          }
+        });
+
+        res.on('error', (error) => {
+          if (!isResolved) {
+            clearTimeout(timeout);
+            reject(error);
+          }
+        });
+      });
+
+      req.on('error', (error) => {
+        if (!isResolved) {
+          clearTimeout(timeout);
+          console.error(`[SyncthingService] Event stream request error:`, error);
+          reject(error);
+        }
+      });
+
+      req.end();
+    });
+  }
+
   // Add device to folder with optional role (sendreceive or receiveonly)
   // CRITICAL: In Syncthing, the folder type is PER-DEVICE
   // - Owner's device: folder type = "sendreceive" (can send and receive)

@@ -15,6 +15,7 @@ import { logger } from './logger';
 import { initializeSyncWebSocket, getSyncWebSocketClient } from './syncWebSocketClient';
 import { listDirectory, scanDirectoryTree, scanDirectoryFlat, getDirectoryStats, FileItem, DirectoryEntry } from './fileScanner';
 import { FileWatcher } from './services/fileWatcher';
+import { snapshotCache } from './services/snapshotCache';
 
 let mainWindow: BrowserWindow | null;
 const agentController = new AgentController();
@@ -431,6 +432,54 @@ const setupIPC = () => {
   ipcMain.handle('secureStore:clear', async () => {
     try { await fs.promises.unlink(refreshFile); } catch (e) {}
     return { ok: true };
+  });
+
+  // Snapshot Cache Handlers
+  ipcMain.handle('snapshot:getCached', async (_ev, projectId: string) => {
+    try {
+      const cached = await snapshotCache.getCachedSnapshot(projectId);
+      return cached || null;
+    } catch (error) {
+      logger.error(`Failed to get cached snapshot for ${projectId}:`, error);
+      return null;
+    }
+  });
+
+  ipcMain.handle('snapshot:downloadAndCache', async (_ev, projectId: string, downloadUrl: string) => {
+    try {
+      // Setup progress callback
+      const onProgress = (status: string, progress?: number) => {
+        if (mainWindow && mainWindow.webContents) {
+          mainWindow.webContents.send('snapshot:progress', status, progress);
+        }
+      };
+
+      const result = await snapshotCache.downloadAndCacheSnapshot(projectId, downloadUrl, onProgress);
+      return result;
+    } catch (error) {
+      logger.error(`Failed to download and cache snapshot for ${projectId}:`, error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle('snapshot:clearProject', async (_ev, projectId: string) => {
+    try {
+      snapshotCache.clearProjectCache(projectId);
+      return { ok: true };
+    } catch (error) {
+      logger.error(`Failed to clear snapshot cache for ${projectId}:`, error);
+      return { ok: false, error: String(error) };
+    }
+  });
+
+  ipcMain.handle('snapshot:clearAll', async () => {
+    try {
+      snapshotCache.clearAllCache();
+      return { ok: true };
+    } catch (error) {
+      logger.error('Failed to clear all snapshot cache:', error);
+      return { ok: false, error: String(error) };
+    }
   });
 
   // Nebula config generation

@@ -132,38 +132,75 @@ export const FileTreeBrowser: React.FC<FileTreeBrowserProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [displayedTree, setDisplayedTree] = useState<FileNode | null>(null);
+  const [loadingStatus, setLoadingStatus] = useState<string>('Loading...');
 
   useEffect(() => {
     fetchFileTree();
   }, [projectId, snapshotUrl]);
 
+  // Listen for snapshot progress updates
+  useEffect(() => {
+    const handleProgress = (status: string, progress?: number) => {
+      setLoadingStatus(`${status}${progress !== undefined ? ` (${progress}%)` : ''}`);
+    };
+
+    (window as any).api?.snapshotCache?.onProgress?.(handleProgress);
+
+    return () => {
+      // Cleanup if needed
+    };
+  }, []);
+
   const fetchFileTree = async () => {
     setLoading(true);
     setError(null);
+    setLoadingStatus('Loading...');
+
     try {
-      let response;
+      let fileData: FileSnapshot[] = [];
+
       if (snapshotUrl) {
-        // Fetch snapshot directly
-        response = await fetch(snapshotUrl);
-        if (!response.ok) throw new Error('Failed to fetch snapshot');
-        const snapshotData = await response.json();
-        const files = snapshotData.files || [];
-        const builtTree = buildFileTree(files as FileSnapshot[]);
-        setTree(builtTree);
-        setDisplayedTree(builtTree);
+        // Try to get from cache first
+        setLoadingStatus('Checking cache...');
+        const cached = await (window as any).api?.snapshotCache?.getCached?.(projectId);
+
+        if (cached && cached.files) {
+          setLoadingStatus('Loading from cache...');
+          fileData = cached.files;
+        } else {
+          // Download and cache
+          setLoadingStatus('Downloading snapshot...');
+          const downloaded = await (window as any).api?.snapshotCache?.downloadAndCache?.(projectId, snapshotUrl);
+
+          if (downloaded && downloaded.files) {
+            fileData = downloaded.files;
+          } else {
+            // Fallback to direct fetch
+            setLoadingStatus('Processing snapshot...');
+            const response = await fetch(snapshotUrl);
+            if (!response.ok) throw new Error('Failed to fetch snapshot');
+            const snapshotData = await response.json();
+            fileData = snapshotData.files || [];
+          }
+        }
       } else {
         // Fetch from API endpoint
+        setLoadingStatus('Fetching file list from server...');
         const apiResponse = await cloudAPI.get(`/projects/${projectId}/file-tree`);
-        const files = apiResponse.data.files || [];
-        const builtTree = buildFileTree(files as FileSnapshot[]);
-        setTree(builtTree);
-        setDisplayedTree(builtTree);
+        fileData = apiResponse.data.files || [];
       }
+
+      setLoadingStatus('Building file tree...');
+      const builtTree = buildFileTree(fileData as FileSnapshot[]);
+      setTree(builtTree);
+      setDisplayedTree(builtTree);
+      setLoadingStatus('Ready');
     } catch (err) {
       console.error('Failed to fetch file tree:', err);
       setError(
         err instanceof Error ? err.message : 'Failed to load file browser'
       );
+      setLoadingStatus('Error loading files');
     } finally {
       setLoading(false);
     }
@@ -191,10 +228,13 @@ export const FileTreeBrowser: React.FC<FileTreeBrowserProps> = ({
           minHeight: 300,
         }}
       >
-        <Stack alignItems="center" spacing={1}>
-          <CircularProgress size={32} />
-          <Typography variant="caption" color="textSecondary">
-            Building file tree...
+        <Stack alignItems="center" spacing={2}>
+          <CircularProgress size={40} />
+          <Typography variant="body2" sx={{ fontWeight: 500, textAlign: 'center', maxWidth: 200 }}>
+            {loadingStatus}
+          </Typography>
+          <Typography variant="caption" color="textSecondary" sx={{ textAlign: 'center', maxWidth: 250 }}>
+            This may take a moment on first load while we fetch and cache your file list.
           </Typography>
         </Stack>
       </Box>
