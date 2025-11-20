@@ -99,6 +99,100 @@ func (sc *SyncthingClient) GetFolderStatus(folderID string) (map[string]interfac
 	return sc.get(fmt.Sprintf("/rest/db/status?folder=%s", folderID))
 }
 
+// RemoveFolder removes a folder from Syncthing
+func (sc *SyncthingClient) RemoveFolder(folderID string) error {
+	req, err := http.NewRequest("DELETE", sc.baseURL+"/rest/config/folders/"+folderID, nil)
+	if err != nil {
+		return err
+	}
+	return sc.doRequest(req)
+}
+
+// AddDeviceToFolder adds a device to a folder
+func (sc *SyncthingClient) AddDeviceToFolder(folderID, deviceID string) error {
+	// Get current folder config
+	folderConfig, err := sc.get("/rest/config/folders/" + folderID)
+	if err != nil {
+		return err
+	}
+
+	// Add device to devices list
+	devices, ok := folderConfig["devices"].([]interface{})
+	if !ok {
+		devices = []interface{}{}
+	}
+
+	// Check if device already exists
+	for _, d := range devices {
+		if device, ok := d.(map[string]interface{}); ok {
+			if device["deviceID"] == deviceID {
+				return nil // Device already in folder
+			}
+		}
+	}
+
+	// Add new device
+	devices = append(devices, map[string]interface{}{
+		"deviceID": deviceID,
+	})
+	folderConfig["devices"] = devices
+
+	// Update folder config
+	data, err := json.Marshal(folderConfig)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequest("PUT", sc.baseURL+"/rest/config/folders/"+folderID, bytes.NewBuffer(data))
+	if err != nil {
+		return err
+	}
+
+	return sc.doRequest(req)
+}
+
+// RemoveDeviceFromFolder removes a device from a folder
+func (sc *SyncthingClient) RemoveDeviceFromFolder(folderID, deviceID string) error {
+	// Get current folder config
+	folderConfig, err := sc.get("/rest/config/folders/" + folderID)
+	if err != nil {
+		return err
+	}
+
+	// Remove device from devices list
+	devices, ok := folderConfig["devices"].([]interface{})
+	if !ok {
+		return nil // No devices to remove
+	}
+
+	// Filter out the device
+	var filteredDevices []interface{}
+	for _, d := range devices {
+		if device, ok := d.(map[string]interface{}); ok {
+			if device["deviceID"] != deviceID {
+				filteredDevices = append(filteredDevices, d)
+			}
+		} else {
+			filteredDevices = append(filteredDevices, d)
+		}
+	}
+
+	folderConfig["devices"] = filteredDevices
+
+	// Update folder config
+	data, err := json.Marshal(folderConfig)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequest("PUT", sc.baseURL+"/rest/config/folders/"+folderID, bytes.NewBuffer(data))
+	if err != nil {
+		return err
+	}
+
+	return sc.doRequest(req)
+}
+
 func (sc *SyncthingClient) postConfig(endpoint string, payload interface{}) error {
 	data, err := json.Marshal(payload)
 	if err != nil {

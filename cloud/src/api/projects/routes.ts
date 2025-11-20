@@ -1628,36 +1628,13 @@ router.post('/:projectId/resume-sync', authMiddleware, async (req: Request, res:
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    // Initialize Syncthing service (use server-side API key)
-    const syncthingService = new SyncthingService(
-      process.env.SYNCTHING_API_KEY || '',
-      process.env.SYNCTHING_HOST || 'localhost',
-      parseInt(process.env.SYNCTHING_PORT || '8384')
-    );
-
-    if (isOwner) {
-      // Owner: resume the entire folder
-      await syncthingService.resumeFolder(project.syncthing_folder_id);
-    } else {
-      // Member: add their device back to the folder
-      const { data: userDevice } = await supabase
-        .from('devices')
-        .select('syncthing_id')
-        .eq('user_id', userId)
-        .limit(1)
-        .single();
-
-      if (userDevice?.syncthing_id) {
-        await syncthingService.addDeviceToFolder(
-          project.syncthing_folder_id,
-          userDevice.syncthing_id
-        );
-      }
-    }
+    // NOTE: Syncthing pause/resume is now handled by the Electron client via IPC
+    // The client should call project:resumeSync or project:addDeviceToFolder as appropriate
+    // This keeps local Syncthing operations local and avoids CSRF/connection issues
 
     res.json({
       success: true,
-      message: isOwner ? 'Sync resumed successfully' : 'Sync added successfully',
+      message: isOwner ? 'Client should resume sync via IPC' : 'Client should add device to folder via IPC',
       projectId,
       projectName: project.name,
       userRole: isOwner ? 'owner' : 'member',
@@ -1675,11 +1652,11 @@ router.post('/:projectId/resume-sync', authMiddleware, async (req: Request, res:
 router.post('/:projectId/sync-stop', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { projectId } = req.params;
-    const { deviceId, syncthingApiKey } = req.body;
+    const { deviceId } = req.body;
     const userId = (req as any).user.id;
 
-    if (!deviceId || !syncthingApiKey) {
-      return res.status(400).json({ error: 'deviceId and syncthingApiKey required' });
+    if (!deviceId) {
+      return res.status(400).json({ error: 'deviceId required' });
     }
 
     // Verify user is owner
@@ -1697,15 +1674,13 @@ router.post('/:projectId/sync-stop', authMiddleware, async (req: Request, res: R
       return res.status(403).json({ error: 'Only project owner can stop sync' });
     }
 
-    // Initialize Syncthing service
-    const syncthingService = new SyncthingService(syncthingApiKey);
-
-    // Remove device from folder
-    await syncthingService.removeDeviceFromFolder(projectId, deviceId);
+    // NOTE: Syncthing device removal is now handled by the Electron client via IPC
+    // The client should call project:removeDeviceFromFolder() after this endpoint returns
+    // This keeps local Syncthing operations local and avoids CSRF/connection issues
 
     res.json({
       success: true,
-      message: 'Sync stopped successfully',
+      message: 'Client should remove device from folder via IPC',
       projectId,
       projectName: project.name,
       deviceId,
@@ -1713,70 +1688,6 @@ router.post('/:projectId/sync-stop', authMiddleware, async (req: Request, res: R
   } catch (error) {
     console.error('Sync-stop exception:', error);
     res.status(500).json({ error: `Failed to stop sync: ${(error as Error).message}` });
-  }
-});
-
-/**
- * GET /api/projects/:projectId/sync-status
- * Get current sync status for a project
- */
-router.get('/:projectId/sync-status', authMiddleware, async (req: Request, res: Response) => {
-  try {
-    const { projectId } = req.params;
-    const { syncthingApiKey } = req.query;
-    const userId = (req as any).user.id;
-
-    // Verify user has access
-    const { data: project } = await supabase
-      .from('projects')
-      .select('owner_id')
-      .eq('id', projectId)
-      .single();
-
-    if (!project) {
-      return res.status(404).json({ error: 'Project not found' });
-    }
-
-    const isOwner = project.owner_id === userId;
-    if (!isOwner) {
-      const { data: member } = await supabase
-        .from('project_members')
-        .select('*')
-        .eq('project_id', projectId)
-        .eq('user_id', userId)
-        .eq('status', 'accepted')
-        .single();
-
-      if (!member) {
-        return res.status(403).json({ error: 'Access denied' });
-      }
-    }
-
-    // If no API key provided, return basic status
-    if (!syncthingApiKey) {
-      return res.json({
-        state: 'unknown',
-        globalBytes: 0,
-        localBytes: 0,
-        needsBytes: 0,
-        message: 'Provide syncthingApiKey query parameter for detailed status',
-      });
-    }
-
-    // Initialize Syncthing service and get status
-    const syncthingService = new SyncthingService(String(syncthingApiKey));
-    const status = await syncthingService.getFolderStatus(projectId);
-
-    res.json({
-      state: status.state || 'idle',
-      globalBytes: status.global?.bytes || 0,
-      localBytes: status.local?.bytes || 0,
-      needsBytes: status.needsBytes || 0,
-      fullStatus: status,
-    });
-  } catch (error) {
-    console.error('Sync-status exception:', error);
-    res.status(500).json({ error: `Failed to get sync status: ${(error as Error).message}` });
   }
 });
 

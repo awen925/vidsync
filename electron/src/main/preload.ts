@@ -42,6 +42,11 @@ contextBridge.exposeInMainWorld('api', {
   deviceSyncNow: (opts: { accessToken: string }) => ipcRenderer.invoke('device:syncNow', opts),
   // Project folder management
   projectEnsureFolders: (opts: { accessToken: string; projectIds?: string[] }) => ipcRenderer.invoke('project:ensureFolders', opts),
+  projectPauseSync: (opts: { projectId: string }) => ipcRenderer.invoke('project:pauseSync', opts),
+  projectResumeSync: (opts: { projectId: string }) => ipcRenderer.invoke('project:resumeSync', opts),
+  projectRemoveDeviceFromFolder: (opts: { projectId: string; deviceId: string }) => ipcRenderer.invoke('project:removeDeviceFromFolder', opts),
+  projectAddDeviceToFolder: (opts: { projectId: string; deviceId: string }) => ipcRenderer.invoke('project:addDeviceToFolder', opts),
+  projectStopSync: (opts: { projectId: string; deviceId: string }) => ipcRenderer.invoke('project:stopSync', opts),
   onSyncTransferProgress: (cb: (event: any) => void) => ipcRenderer.on('sync:transfer-progress', (_ev, data) => cb(data)),
   onSyncComplete: (cb: (event: any) => void) => ipcRenderer.on('sync:complete', (_ev, data) => cb(data)),
   onSyncError: (cb: (event: any) => void) => ipcRenderer.on('sync:error', (_ev, data) => cb(data)),

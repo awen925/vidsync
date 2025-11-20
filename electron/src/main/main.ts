@@ -12,6 +12,7 @@ import { AgentController } from './agentController';
 import { SyncthingManager } from './syncthingManager';
 import { NebulaManager } from './nebulaManager';
 import { logger } from './logger';
+import { GoAgentClient } from './services/goAgentClient';
 import { initializeSyncWebSocket, getSyncWebSocketClient } from './syncWebSocketClient';
 import { listDirectory, scanDirectoryTree, scanDirectoryFlat, getDirectoryStats, FileItem, DirectoryEntry } from './fileScanner';
 import { FileWatcher } from './services/fileWatcher';
@@ -22,6 +23,7 @@ let mainWindow: BrowserWindow | null;
 const agentController = new AgentController();
 const syncthingManager = new SyncthingManager();
 const nebulaManager = new NebulaManager();
+const goAgentClient = new GoAgentClient(logger);
 
 // File watchers per project (projectId -> FileWatcher instance)
 const projectWatchers = new Map<string, FileWatcher>();
@@ -273,6 +275,67 @@ const setupIPC = () => {
       return { success: false, error: e?.message || String(e) };
     }
   });
+
+
+// Pause Syncthing folder for a project (owner)
+ipcMain.handle('project:pauseSync', async (_ev, { projectId, accessToken }) => {
+  try {
+    // Call Go service which manages Syncthing operations
+    const result = await goAgentClient.pauseSync(projectId, accessToken);
+    if (result.ok) return { ok: true };
+    return { ok: false, error: result.error || 'Failed to pause sync' };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+});
+
+// Remove device from Syncthing folder (member)
+ipcMain.handle('project:removeDeviceFromFolder', async (_ev, { projectId, deviceId, accessToken }) => {
+  try {
+    // Call Go service which manages Syncthing operations
+    const result = await goAgentClient.removeDevice(projectId, deviceId, accessToken);
+    if (result.ok) return { ok: true };
+    return { ok: false, error: result.error || 'Failed to remove device' };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+});
+
+// Resume Syncthing folder for a project (owner)
+ipcMain.handle('project:resumeSync', async (_ev, { projectId, accessToken }) => {
+  try {
+    // Call Go service which manages Syncthing operations
+    const result = await goAgentClient.resumeSync(projectId, accessToken);
+    if (result.ok) return { ok: true };
+    return { ok: false, error: result.error || 'Failed to resume sync' };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+});
+
+// Add device to Syncthing folder (member)
+ipcMain.handle('project:addDeviceToFolder', async (_ev, { projectId, deviceId, accessToken }) => {
+  try {
+    // Call Go service which manages Syncthing operations
+    const result = await goAgentClient.addDevice(projectId, deviceId, accessToken);
+    if (result.ok) return { ok: true };
+    return { ok: false, error: result.error || 'Failed to add device' };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+});
+
+// Stop sync - remove device from Syncthing folder
+ipcMain.handle('project:stopSync', async (_ev, { projectId, deviceId, accessToken }) => {
+  try {
+    // Call Go service which manages Syncthing operations
+    const result = await goAgentClient.stopSync(projectId, accessToken);
+    if (result.ok) return { ok: true };
+    return { ok: false, error: result.error || 'Failed to stop sync' };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+});
 
   ipcMain.handle('syncthing:progressForProject', async (_ev, projectId: string) => {
     try {

@@ -169,19 +169,21 @@ export const SyncControlPanel: React.FC<SyncControlPanelProps> = ({
   };
 
   const handlePauseSync = async () => {
-    if (!apiKey) {
-      setError('Please provide Syncthing API key');
-      return;
-    }
-
     setLoading(true);
     setError(null);
     setSuccess(null);
 
     try {
-      await cloudAPI.post(`/projects/${projectId}/pause-sync`, {
-        syncthingApiKey: apiKey,
-      });
+      // First notify backend to update state
+      await cloudAPI.post(`/projects/${projectId}/pause-sync`, {});
+
+      // Then pause the folder via Syncthing (local IPC)
+      const result = await (window as any).api.projectPauseSync({ projectId });
+      if (!result.ok) {
+        setError(`Failed to pause Syncthing folder: ${result.error}`);
+        setLoading(false);
+        return;
+      }
 
       setSyncStatus((prev) => ({ ...prev, state: 'paused' }));
       setSuccess('Sync paused');
@@ -196,19 +198,21 @@ export const SyncControlPanel: React.FC<SyncControlPanelProps> = ({
   };
 
   const handleResumeSync = async () => {
-    if (!apiKey) {
-      setError('Please provide Syncthing API key');
-      return;
-    }
-
     setLoading(true);
     setError(null);
     setSuccess(null);
 
     try {
-      await cloudAPI.post(`/projects/${projectId}/resume-sync`, {
-        syncthingApiKey: apiKey,
-      });
+      // First notify backend to update state
+      await cloudAPI.post(`/projects/${projectId}/resume-sync`, {});
+
+      // Then resume the folder via Syncthing (local IPC)
+      const result = await (window as any).api.projectResumeSync({ projectId });
+      if (!result.ok) {
+        setError(`Failed to resume Syncthing folder: ${result.error}`);
+        setLoading(false);
+        return;
+      }
 
       setSyncStatus((prev) => ({ ...prev, state: 'syncing' }));
       setSuccess('Sync resumed');
@@ -228,11 +232,6 @@ export const SyncControlPanel: React.FC<SyncControlPanelProps> = ({
       return;
     }
 
-    if (!apiKey) {
-      setError('Please provide Syncthing API key');
-      return;
-    }
-
     if (!window.confirm(`Stop syncing "${projectName}" to this device?`)) {
       return;
     }
@@ -242,10 +241,18 @@ export const SyncControlPanel: React.FC<SyncControlPanelProps> = ({
     setSuccess(null);
 
     try {
+      // First notify backend to update state
       await cloudAPI.post(`/projects/${projectId}/sync-stop`, {
         deviceId: selectedDeviceId,
-        syncthingApiKey: apiKey,
       });
+
+      // Then remove device from folder via Syncthing (local IPC)
+      const result = await (window as any).api.projectStopSync({ projectId, deviceId: selectedDeviceId });
+      if (!result.ok) {
+        setError(`Failed to remove device from Syncthing folder: ${result.error}`);
+        setLoading(false);
+        return;
+      }
 
       setSyncStatus({
         state: 'stopped',

@@ -88,7 +88,17 @@ export const ProjectSyncControls: React.FC<ProjectSyncControlsProps> = ({
     setShowPauseConfirm(false);
     setLoading(true);
     try {
+      // Notify backend to update state
       await cloudAPI.post(`/projects/${projectId}/pause-sync`, {});
+      
+      // Then pause folder via Syncthing (local IPC)
+      const result = await (window as any).api.projectPauseSync({ projectId });
+      if (!result.ok) {
+        setError(`Failed to pause Syncthing folder: ${result.error}`);
+        setLoading(false);
+        return;
+      }
+
       setPaused(true);
       setError(null);
       await fetchSyncStatus();
@@ -103,7 +113,17 @@ export const ProjectSyncControls: React.FC<ProjectSyncControlsProps> = ({
   const handleResume = async () => {
     setLoading(true);
     try {
+      // Notify backend to update state
       await cloudAPI.post(`/projects/${projectId}/resume-sync`, {});
+      
+      // Then resume folder via Syncthing (local IPC)
+      const result = await (window as any).api.projectResumeSync({ projectId });
+      if (!result.ok) {
+        setError(`Failed to resume Syncthing folder: ${result.error}`);
+        setLoading(false);
+        return;
+      }
+
       setPaused(false);
       setError(null);
       await fetchSyncStatus();

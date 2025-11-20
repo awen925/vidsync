@@ -5,9 +5,12 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/vidsync/agent/internal/api"
 	"github.com/vidsync/agent/internal/config"
 	"github.com/vidsync/agent/internal/device"
+	"github.com/vidsync/agent/internal/handlers"
 	"github.com/vidsync/agent/internal/nebula"
+	"github.com/vidsync/agent/internal/services"
 	"github.com/vidsync/agent/internal/sync"
 	"github.com/vidsync/agent/internal/util"
 	"github.com/vidsync/agent/internal/ws"
@@ -43,6 +46,25 @@ func main() {
 
 	// Initialize Syncthing manager
 	syncMgr := sync.NewSyncManager(cfg.DataDir, logger)
+
+	// Initialize API clients
+	syncthingClient := api.NewSyncthingClient("http://localhost:8384", cfg.SyncthingAPIKey)
+	cloudClient := api.NewCloudClient(cfg.CloudURL, cfg.CloudKey)
+
+	// Initialize services
+	projectService := services.NewProjectService(syncthingClient, cloudClient, logger)
+	syncService := services.NewSyncService(syncthingClient, cloudClient, logger)
+	deviceService := services.NewDeviceService(syncthingClient, cloudClient, logger)
+	fileService := services.NewFileService(syncthingClient, cloudClient, logger)
+
+	// Initialize API router and start HTTP server
+	router := handlers.NewRouter(projectService, syncService, deviceService, fileService, logger)
+	go func() {
+		if err := router.Start(":5001"); err != nil {
+			logger.Error("HTTP API server error: %v", err)
+		}
+	}()
+	logger.Info("HTTP API server started on :5001")
 
 	// Initialize WebSocket server
 	wsServer := ws.NewWebSocketServer(":29999", logger, deviceMgr)

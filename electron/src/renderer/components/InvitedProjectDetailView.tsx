@@ -95,7 +95,15 @@ export const InvitedProjectDetailView: React.FC<InvitedProjectDetailViewProps> =
 
   const handlePauseSync = async () => {
     try {
+      // Notify backend
       await cloudAPI.post(`/projects/${project.id}/pause-sync`, {});
+      
+      // Then pause folder via Syncthing IPC
+      const result = await (window as any).api.projectPauseSync({ projectId: project.id });
+      if (!result.ok) {
+        console.error('Failed to pause Syncthing folder:', result.error);
+      }
+      
       setPauseConfirmOpen(false);
       // Refresh sync status
       const response = await cloudAPI.get(`/projects/${project.id}/sync-status`);
@@ -108,7 +116,15 @@ export const InvitedProjectDetailView: React.FC<InvitedProjectDetailViewProps> =
 
   const handleResumeSync = async () => {
     try {
+      // Notify backend
       await cloudAPI.post(`/projects/${project.id}/resume-sync`, {});
+      
+      // Then resume folder via Syncthing IPC
+      const result = await (window as any).api.projectResumeSync({ projectId: project.id });
+      if (!result.ok) {
+        console.error('Failed to resume Syncthing folder:', result.error);
+      }
+      
       // Refresh sync status
       const response = await cloudAPI.get(`/projects/${project.id}/sync-status`);
       setSyncStatus(response.data);
