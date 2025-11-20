@@ -7,40 +7,40 @@ import (
 
 // SnapshotProgressEvent represents a progress update during snapshot generation
 type SnapshotProgressEvent struct {
-	ProjectID      string    `json:"projectId"`
-	Step           string    `json:"step"`           // "waiting", "browsing", "compressing", "uploading", "completed", "failed"
-	StepNumber     int       `json:"stepNumber"`     // 1-6
-	TotalSteps     int       `json:"totalSteps"`     // Always 6
-	Progress       int       `json:"progress"`       // 0-100 overall percentage
-	FileCount      int       `json:"fileCount"`      // Current file count (if known)
-	TotalSize      int64     `json:"totalSize"`      // Current total size (if known)
-	Message        string    `json:"message"`        // Human-readable message
-	SnapshotURL    string    `json:"snapshotUrl,omitempty"`    // URL when completed
-	Error          string    `json:"error,omitempty"`          // Error message if failed
-	Timestamp      time.Time `json:"timestamp"`
+	ProjectID   string    `json:"projectId"`
+	Step        string    `json:"step"`                  // "waiting", "browsing", "compressing", "uploading", "completed", "failed"
+	StepNumber  int       `json:"stepNumber"`            // 1-6
+	TotalSteps  int       `json:"totalSteps"`            // Always 6
+	Progress    int       `json:"progress"`              // 0-100 overall percentage
+	FileCount   int       `json:"fileCount"`             // Current file count (if known)
+	TotalSize   int64     `json:"totalSize"`             // Current total size (if known)
+	Message     string    `json:"message"`               // Human-readable message
+	SnapshotURL string    `json:"snapshotUrl,omitempty"` // URL when completed
+	Error       string    `json:"error,omitempty"`       // Error message if failed
+	Timestamp   time.Time `json:"timestamp"`
 }
 
 // SnapshotProgressTracker tracks progress of snapshot generation
 type SnapshotProgressTracker struct {
-	mu         sync.RWMutex
-	trackers   map[string]*ProjectProgressTracker // projectId -> tracker
+	mu          sync.RWMutex
+	trackers    map[string]*ProjectProgressTracker      // projectId -> tracker
 	subscribers map[string][]chan SnapshotProgressEvent // projectId -> list of subscribers
 }
 
 // ProjectProgressTracker tracks progress for a single project
 type ProjectProgressTracker struct {
-	ProjectID     string
-	CurrentStep   string
-	StepNumber    int
-	FileCount     int
-	TotalSize     int64
-	StartTime     time.Time
-	EstimatedEnd  time.Time
-	LastUpdate    time.Time
-	SnapshotURL   string
-	Error         string
-	IsComplete    bool
-	IsFailed      bool
+	ProjectID    string
+	CurrentStep  string
+	StepNumber   int
+	FileCount    int
+	TotalSize    int64
+	StartTime    time.Time
+	EstimatedEnd time.Time
+	LastUpdate   time.Time
+	SnapshotURL  string
+	Error        string
+	IsComplete   bool
+	IsFailed     bool
 }
 
 // NewSnapshotProgressTracker creates a new progress tracker
@@ -135,14 +135,14 @@ func (spt *SnapshotProgressTracker) CompleteSnapshot(projectID string, snapshotU
 
 	// Send completion event
 	event := SnapshotProgressEvent{
-		ProjectID:  projectID,
-		Step:       "completed",
-		StepNumber: 6,
-		TotalSteps: 6,
-		Progress:   100,
+		ProjectID:   projectID,
+		Step:        "completed",
+		StepNumber:  6,
+		TotalSteps:  6,
+		Progress:    100,
 		SnapshotURL: snapshotURL,
-		Message:    "Snapshot generation completed successfully",
-		Timestamp:  time.Now(),
+		Message:     "Snapshot generation completed successfully",
+		Timestamp:   time.Now(),
 	}
 
 	for _, ch := range subscribers {
