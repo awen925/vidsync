@@ -9,11 +9,12 @@ import (
 
 // Router sets up HTTP routes for the API
 type Router struct {
-	projectHandler *ProjectHandler
-	syncHandler    *SyncHandler
-	deviceHandler  *DeviceHandler
-	fileHandler    *FileHandler
-	logger         *util.Logger
+	projectHandler  *ProjectHandler
+	syncHandler     *SyncHandler
+	deviceHandler   *DeviceHandler
+	fileHandler     *FileHandler
+	progressHandler *ProgressHandler
+	logger          *util.Logger
 }
 
 // NewRouter creates a new HTTP router
@@ -25,11 +26,12 @@ func NewRouter(
 	logger *util.Logger,
 ) *Router {
 	return &Router{
-		projectHandler: NewProjectHandler(projectService, logger),
-		syncHandler:    NewSyncHandler(syncService, logger),
-		deviceHandler:  NewDeviceHandler(deviceService, logger),
-		fileHandler:    NewFileHandler(fileService, logger),
-		logger:         logger,
+		projectHandler:  NewProjectHandler(projectService, logger),
+		syncHandler:     NewSyncHandler(syncService, logger),
+		deviceHandler:   NewDeviceHandler(deviceService, logger),
+		fileHandler:     NewFileHandler(fileService, logger),
+		progressHandler: NewProgressHandler(fileService, logger),
+		logger:          logger,
 	}
 }
 
@@ -55,6 +57,10 @@ func (r *Router) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/projects/{projectId}/files", r.fileHandler.GetFiles)
 	mux.HandleFunc("GET /api/v1/projects/{projectId}/files-tree", r.fileHandler.GetFileTree)
 	mux.HandleFunc("POST /api/v1/projects/{projectId}/snapshot", r.fileHandler.GenerateSnapshot)
+
+	// Progress endpoints (real-time snapshot generation progress)
+	mux.HandleFunc("GET /api/v1/projects/{projectId}/progress", r.progressHandler.GetSnapshotProgress)
+	mux.HandleFunc("GET /api/v1/projects/{projectId}/progress/stream", r.progressHandler.SubscribeSnapshotProgress)
 
 	// Device endpoints
 	mux.HandleFunc("POST /api/v1/devices/sync", r.deviceHandler.SyncDevice)

@@ -22,6 +22,7 @@ import YourProjectsList from '../../components/Projects/YourProjectsList';
 import YourProjectHeader from '../../components/Projects/YourProjectHeader';
 import YourProjectFilesTab from '../../components/Projects/YourProjectFilesTab';
 import YourProjectSharedTab from '../../components/Projects/YourProjectSharedTab';
+import SnapshotProgressModal from '../../components/SnapshotProgressModal';
 
 
 interface Project {
@@ -87,6 +88,8 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
     existingProjectName: string;
     existingProjectId: string;
   } | null>(null);
+  const [progressModalOpen, setProgressModalOpen] = useState(false);
+  const [progressProjectId, setProgressProjectId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchProjects();
@@ -273,8 +276,11 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
 
       const projectId = response.projectId;
 
-      // Start polling for snapshot completion with exponential backoff
-      setCreationStatus('Generating file snapshot...');
+      // Show progress modal for real-time snapshot generation updates
+      setProgressProjectId(projectId);
+      setProgressModalOpen(true);
+
+      // Fall back to polling if progress modal fails to connect
       const snapshotReady = await pollForSnapshotCompletion(projectId, 300); // 5 minute timeout
 
       if (snapshotReady) {
@@ -814,6 +820,23 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Snapshot Progress Modal */}
+      <SnapshotProgressModal
+        projectId={progressProjectId}
+        isOpen={progressModalOpen}
+        onClose={() => {
+          setProgressModalOpen(false);
+          setProgressProjectId(null);
+        }}
+        onComplete={() => {
+          // Refresh projects after successful snapshot
+          fetchProjects();
+        }}
+        onError={(error) => {
+          console.error('Snapshot progress error:', error);
+        }}
+      />
     </Box>
   );
 };

@@ -16,18 +16,35 @@ import (
 
 // FileService manages file-related business logic
 type FileService struct {
-	syncClient  *api.SyncthingClient
-	cloudClient *api.CloudClient
-	logger      *util.Logger
+	syncClient      *api.SyncthingClient
+	cloudClient     *api.CloudClient
+	logger          *util.Logger
+	progressTracker *SnapshotProgressTracker
 }
 
 // NewFileService creates a new file service
 func NewFileService(syncClient *api.SyncthingClient, cloudClient *api.CloudClient, logger *util.Logger) *FileService {
 	return &FileService{
-		syncClient:  syncClient,
-		cloudClient: cloudClient,
-		logger:      logger,
+		syncClient:      syncClient,
+		cloudClient:     cloudClient,
+		logger:          logger,
+		progressTracker: NewSnapshotProgressTracker(),
 	}
+}
+
+// NewFileServiceWithTracker creates a new file service with a custom progress tracker
+func NewFileServiceWithTracker(syncClient *api.SyncthingClient, cloudClient *api.CloudClient, logger *util.Logger, tracker *SnapshotProgressTracker) *FileService {
+	return &FileService{
+		syncClient:      syncClient,
+		cloudClient:     cloudClient,
+		logger:          logger,
+		progressTracker: tracker,
+	}
+}
+
+// GetProgressTracker returns the progress tracker
+func (fs *FileService) GetProgressTracker() *SnapshotProgressTracker {
+	return fs.progressTracker
 }
 
 // GetFiles gets a list of files in a project folder
@@ -158,36 +175,48 @@ func (fs *FileService) WaitForScanCompletion(ctx context.Context, projectID stri
 // 3. Wait for Syncthing folder scan to complete (this method)
 // 4. Browse files and create snapshot JSON
 // 5. Upload snapshot to Supabase storage
+// Emits progress updates via progressTracker
 func (fs *FileService) GenerateSnapshot(ctx context.Context, projectID, accessToken string) (map[string]interface{}, error) {
 	fs.logger.Info("[FileService] Generating snapshot for project: %s", projectID)
 
+	// Initialize progress tracking
+	fs.progressTracker.StartTracking(projectID)
+	defer fs.progressTracker.CleanupProject(projectID)
+
 	// Step 1: Wait for Syncthing folder to complete initial scan (max 2 minutes)
 	fs.logger.Debug("[FileService] Step 1: Waiting for Syncthing folder scan...")
+	fs.progressTracker.UpdateProgress(projectID, "waiting", 1, 0, 0, "Waiting for Syncthing folder scan to complete...")
 	err := fs.WaitForScanCompletion(ctx, projectID, 120)
 	if err != nil {
 		fs.logger.Error("[FileService] Failed waiting for scan completion: %v", err)
+		fs.progressTracker.FailSnapshot(projectID, fmt.Sprintf("Scan completion timeout: %v", err))
 		return nil, fmt.Errorf("scan completion timeout: %w", err)
 	}
 
 	// Step 2: Get folder status and path
 	fs.logger.Debug("[FileService] Step 2: Getting folder status...")
+	fs.progressTracker.UpdateProgress(projectID, "browsing", 2, 0, 0, "Getting folder status...")
 	status, err := fs.syncClient.GetFolderStatus(projectID)
 	if err != nil {
 		fs.logger.Error("[FileService] Failed to get folder status: %v", err)
+		fs.progressTracker.FailSnapshot(projectID, fmt.Sprintf("Failed to get folder status: %v", err))
 		return nil, err
 	}
 
 	folderPath, ok := status["path"].(string)
 	if !ok || folderPath == "" {
 		fs.logger.Error("[FileService] Could not determine folder path")
+		fs.progressTracker.FailSnapshot(projectID, "Folder path not available")
 		return nil, fmt.Errorf("folder path not available")
 	}
 
 	// Step 3: Browse files to create snapshot
 	fs.logger.Debug("[FileService] Step 3: Browsing files from folder: %s", folderPath)
+	fs.progressTracker.UpdateProgress(projectID, "browsing", 3, 0, 0, "Browsing files in folder...")
 	files, err := fs.syncClient.BrowseFiles(folderPath, 0) // Full depth for complete snapshot
 	if err != nil {
 		fs.logger.Error("[FileService] Failed to browse files: %v", err)
+		fs.progressTracker.FailSnapshot(projectID, fmt.Sprintf("Failed to browse files: %v", err))
 		return nil, err
 	}
 
@@ -207,22 +236,28 @@ func (fs *FileService) GenerateSnapshot(ctx context.Context, projectID, accessTo
 		SyncStatus: status,
 	}
 
+	fs.progressTracker.UpdateProgress(projectID, "compressing", 4, len(files), totalSize, fmt.Sprintf("Processing %d files (%s total)...", len(files), formatBytesSize(totalSize)))
+
 	// Step 5: Serialize snapshot to JSON
 	fs.logger.Debug("[FileService] Step 5: Serializing snapshot to JSON...")
 	snapshotJSON, err := json.Marshal(snapshot)
 	if err != nil {
 		fs.logger.Error("[FileService] Failed to serialize snapshot: %v", err)
+		fs.progressTracker.FailSnapshot(projectID, fmt.Sprintf("Failed to serialize snapshot: %v", err))
 		return nil, err
 	}
 
 	// Step 6: Upload snapshot to cloud storage
 	fs.logger.Debug("[FileService] Step 6: Uploading snapshot to cloud storage...")
+	fs.progressTracker.UpdateProgress(projectID, "uploading", 5, len(files), totalSize, "Uploading snapshot to cloud storage...")
 	snapshotURL, err := fs.uploadSnapshotToCloud(ctx, projectID, snapshotJSON, accessToken)
 	if err != nil {
 		fs.logger.Warn("[FileService] Failed to upload snapshot to cloud: %v", err)
+		fs.progressTracker.FailSnapshot(projectID, fmt.Sprintf("Failed to upload snapshot: %v", err))
 		// Don't fail - local snapshot is valid, upload is optional
 	} else {
 		fs.logger.Info("[FileService] Snapshot uploaded to: %s", snapshotURL)
+		fs.progressTracker.CompleteSnapshot(projectID, snapshotURL)
 	}
 
 	fs.logger.Info("[FileService] Snapshot generated successfully for project: %s", projectID)
@@ -265,7 +300,7 @@ func (fs *FileService) uploadSnapshotToCloud(ctx context.Context, projectID stri
 		if attempt < maxRetries-1 {
 			backoff := initialBackoff * time.Duration(1<<uint(attempt)) // 1s, 2s, 4s
 			fs.logger.Warn("[FileService] Upload attempt %d/%d failed, retrying in %v: %v", attempt+1, maxRetries, backoff, err)
-			
+
 			select {
 			case <-time.After(backoff):
 				// Continue to next attempt
@@ -450,4 +485,24 @@ func buildTree(files []api.FileInfo) map[string]interface{} {
 	}
 
 	return root
+}
+
+// formatBytesSize formats bytes into human-readable format
+func formatBytesSize(bytes int64) string {
+	const (
+		KB = 1024
+		MB = KB * 1024
+		GB = MB * 1024
+	)
+
+	switch {
+	case bytes < KB:
+		return fmt.Sprintf("%d B", bytes)
+	case bytes < MB:
+		return fmt.Sprintf("%.2f KB", float64(bytes)/KB)
+	case bytes < GB:
+		return fmt.Sprintf("%.2f MB", float64(bytes)/MB)
+	default:
+		return fmt.Sprintf("%.2f GB", float64(bytes)/GB)
+	}
 }

@@ -554,6 +554,42 @@ export class GoAgentClient {
       throw error;
     }
   }
+
+  /**
+   * Get current snapshot progress
+   * Returns: step, stepNumber, totalSteps, progress (0-100%), fileCount, totalSize, message, status
+   */
+  async getSnapshotProgress(projectId: string): Promise<any> {
+    try {
+      const response = await this.client.get(
+        `/projects/${projectId}/progress`
+      );
+
+      if (response.status === 200) {
+        return response.data;
+      }
+
+      throw new Error(response.data?.error || 'Failed to get snapshot progress');
+    } catch (error) {
+      const err = error as AxiosError;
+      this.logger.error(
+        `[GoAgent] Get snapshot progress failed: ${err.message}`
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Subscribe to snapshot progress via Server-Sent Events
+   * Returns an EventSource that emits progress updates
+   * Caller is responsible for closing the EventSource
+   */
+  subscribeSnapshotProgress(projectId: string): EventSource {
+    const url = `${this.baseURL}/projects/${projectId}/progress/stream`;
+    this.logger.debug(`[GoAgent] Subscribing to progress stream: ${url}`);
+    
+    return new EventSource(url);
+  }
 }
 
 export default GoAgentClient;
