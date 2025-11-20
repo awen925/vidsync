@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	"github.com/vidsync/agent/internal/api"
 	"github.com/vidsync/agent/internal/util"
@@ -41,6 +43,22 @@ func (ss *SyncService) StartSync(ctx context.Context, projectID, localPath, acce
 		return map[string]interface{}{"ok": false, "error": err.Error()}, err
 	}
 
+	ss.logger.Info("[SyncService] Syncthing scan completed, notifying cloud...")
+
+	// Notify cloud about sync start (non-blocking)
+	_, err = ss.cloudClient.PostWithAuth(
+		fmt.Sprintf("/projects/%s/sync-events", projectID),
+		map[string]interface{}{
+			"type":      "sync_started",
+			"timestamp": time.Now().Unix(),
+		},
+		accessToken,
+	)
+	if err != nil {
+		ss.logger.Warn("[SyncService] Failed to notify cloud about sync start: %v", err)
+		// Don't fail - sync was started locally
+	}
+
 	ss.logger.Info("[SyncService] Sync started successfully for project: %s", projectID)
 	return map[string]interface{}{"ok": true}, nil
 }
@@ -55,7 +73,19 @@ func (ss *SyncService) PauseSync(ctx context.Context, projectID, accessToken str
 		return err
 	}
 
-	// Update DB via cloud API
+	ss.logger.Info("[SyncService] Syncthing paused, notifying cloud...")
+
+	// Update cloud about pause (non-blocking)
+	err = ss.cloudClient.PutWithAuth(
+		fmt.Sprintf("/projects/%s", projectID),
+		map[string]interface{}{"syncStatus": "paused"},
+		accessToken,
+	)
+	if err != nil {
+		ss.logger.Warn("[SyncService] Failed to notify cloud about pause: %v", err)
+		// Don't fail - sync was paused locally
+	}
+
 	ss.logger.Info("[SyncService] Sync paused successfully for project: %s", projectID)
 	return nil
 }
@@ -70,7 +100,19 @@ func (ss *SyncService) ResumeSync(ctx context.Context, projectID, accessToken st
 		return err
 	}
 
-	// Update DB via cloud API
+	ss.logger.Info("[SyncService] Syncthing resumed, notifying cloud...")
+
+	// Update cloud about resume (non-blocking)
+	err = ss.cloudClient.PutWithAuth(
+		fmt.Sprintf("/projects/%s", projectID),
+		map[string]interface{}{"syncStatus": "syncing"},
+		accessToken,
+	)
+	if err != nil {
+		ss.logger.Warn("[SyncService] Failed to notify cloud about resume: %v", err)
+		// Don't fail - sync was resumed locally
+	}
+
 	ss.logger.Info("[SyncService] Sync resumed successfully for project: %s", projectID)
 	return nil
 }
@@ -84,6 +126,19 @@ func (ss *SyncService) StopSync(ctx context.Context, projectID, deviceID, access
 	if err != nil {
 		ss.logger.Error("[SyncService] Failed to remove device from folder: %v", err)
 		return err
+	}
+
+	ss.logger.Info("[SyncService] Device removed, notifying cloud...")
+
+	// Update cloud about stop (non-blocking)
+	err = ss.cloudClient.PutWithAuth(
+		fmt.Sprintf("/projects/%s", projectID),
+		map[string]interface{}{"syncStatus": "stopped"},
+		accessToken,
+	)
+	if err != nil {
+		ss.logger.Warn("[SyncService] Failed to notify cloud about stop: %v", err)
+		// Don't fail - sync was stopped locally
 	}
 
 	ss.logger.Info("[SyncService] Sync stopped successfully for project: %s", projectID)

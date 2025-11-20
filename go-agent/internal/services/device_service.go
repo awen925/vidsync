@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"time"
 
 	"github.com/vidsync/agent/internal/api"
 	"github.com/vidsync/agent/internal/util"
@@ -47,8 +48,25 @@ func (ds *DeviceService) SyncDevice(ctx context.Context, userID, accessToken str
 		return map[string]interface{}{"ok": false, "error": "could not get device ID"}, nil
 	}
 
-	// TODO: Update Supabase via cloud client
-	// This will be done after cloud client is created
+	ds.logger.Info("[DeviceService] Got device ID from Syncthing, notifying cloud...")
+
+	// Notify cloud about device sync (non-blocking)
+	_, err = ds.cloudClient.PostWithAuth(
+		"/devices/sync",
+		map[string]interface{}{
+			"userId":      userID,
+			"deviceId":    deviceID,
+			"syncthingId": deviceID,
+			"timestamp":   time.Now().Unix(),
+		},
+		accessToken,
+	)
+	if err != nil {
+		ds.logger.Warn("[DeviceService] Failed to notify cloud about device sync: %v", err)
+		// Don't fail - local device ID was obtained
+	} else {
+		ds.logger.Info("[DeviceService] Cloud notified about device sync")
+	}
 
 	ds.logger.Info("[DeviceService] Device synced successfully: %s", deviceID)
 	return map[string]interface{}{

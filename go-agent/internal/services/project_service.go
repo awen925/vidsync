@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/vidsync/agent/internal/api"
 	"github.com/vidsync/agent/internal/util"
@@ -51,6 +52,28 @@ func (ps *ProjectService) CreateProject(ctx context.Context, req *CreateProjectR
 		return &CreateProjectResponse{OK: false, Error: err.Error()}, err
 	}
 
+	ps.logger.Info("[ProjectService] Syncthing folder created, notifying cloud...")
+
+	// Notify cloud about project creation (non-blocking)
+	_, err = ps.cloudClient.PostWithAuth(
+		"/projects",
+		map[string]interface{}{
+			"projectId":   req.ProjectID,
+			"name":        req.Name,
+			"localPath":   req.LocalPath,
+			"deviceId":    req.DeviceID,
+			"ownerId":     req.OwnerID,
+			"status":      "active",
+		},
+		req.AccessToken,
+	)
+	if err != nil {
+		ps.logger.Warn("[ProjectService] Failed to notify cloud about project creation: %v", err)
+		// Don't fail - local folder was created, cloud update is secondary
+	} else {
+		ps.logger.Info("[ProjectService] Cloud notified about project creation")
+	}
+
 	ps.logger.Info("[ProjectService] Project created successfully: %s", req.ProjectID)
 	return &CreateProjectResponse{OK: true, ProjectID: req.ProjectID}, nil
 }
@@ -91,6 +114,21 @@ func (ps *ProjectService) DeleteProject(ctx context.Context, projectID, accessTo
 		return err
 	}
 
+	ps.logger.Info("[ProjectService] Syncthing folder removed, notifying cloud...")
+
+	// Notify cloud about project deletion (non-blocking)
+	err = ps.cloudClient.PutWithAuth(
+		fmt.Sprintf("/projects/%s", projectID),
+		map[string]interface{}{"status": "deleted"},
+		accessToken,
+	)
+	if err != nil {
+		ps.logger.Warn("[ProjectService] Failed to notify cloud about project deletion: %v", err)
+		// Don't fail - folder was deleted locally
+	} else {
+		ps.logger.Info("[ProjectService] Cloud notified about project deletion")
+	}
+
 	ps.logger.Info("[ProjectService] Project deleted successfully: %s", projectID)
 	return nil
 }
@@ -106,6 +144,21 @@ func (ps *ProjectService) AddDevice(ctx context.Context, projectID, deviceID, ac
 		return map[string]interface{}{"ok": false, "error": err.Error()}, err
 	}
 
+	ps.logger.Info("[ProjectService] Device added to Syncthing, notifying cloud...")
+
+	// Notify cloud about device addition (non-blocking)
+	_, err = ps.cloudClient.PostWithAuth(
+		fmt.Sprintf("/projects/%s/devices", projectID),
+		map[string]interface{}{"deviceId": deviceID},
+		accessToken,
+	)
+	if err != nil {
+		ps.logger.Warn("[ProjectService] Failed to notify cloud about device addition: %v", err)
+		// Don't fail - device was added locally
+	} else {
+		ps.logger.Info("[ProjectService] Cloud notified about device addition")
+	}
+
 	ps.logger.Info("[ProjectService] Device added successfully to project: %s", projectID)
 	return map[string]interface{}{"ok": true}, nil
 }
@@ -119,6 +172,21 @@ func (ps *ProjectService) RemoveDevice(ctx context.Context, projectID, deviceID,
 	if err != nil {
 		ps.logger.Error("[ProjectService] Failed to remove device from Syncthing folder: %v", err)
 		return err
+	}
+
+	ps.logger.Info("[ProjectService] Device removed from Syncthing, notifying cloud...")
+
+	// Notify cloud about device removal (non-blocking)
+	err = ps.cloudClient.PutWithAuth(
+		fmt.Sprintf("/projects/%s/devices/%s", projectID, deviceID),
+		map[string]interface{}{"status": "removed"},
+		accessToken,
+	)
+	if err != nil {
+		ps.logger.Warn("[ProjectService] Failed to notify cloud about device removal: %v", err)
+		// Don't fail - device was removed locally
+	} else {
+		ps.logger.Info("[ProjectService] Cloud notified about device removal")
 	}
 
 	ps.logger.Info("[ProjectService] Device removed successfully from project: %s", projectID)

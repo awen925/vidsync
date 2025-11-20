@@ -108,6 +108,43 @@ func (cc *CloudClient) post(endpoint string, payload interface{}) (map[string]in
 	return cc.doRequest(req)
 }
 
+// PostWithAuth is like Post but uses Bearer token auth instead of API key
+func (cc *CloudClient) PostWithAuth(endpoint string, payload interface{}, bearerToken string) (map[string]interface{}, error) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", cc.baseURL+endpoint, bytes.NewBuffer(data))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+bearerToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	return cc.doRequest(req)
+}
+
+// PutWithAuth updates a resource with Bearer token auth
+func (cc *CloudClient) PutWithAuth(endpoint string, payload interface{}, bearerToken string) error {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequest("PUT", cc.baseURL+endpoint, bytes.NewBuffer(data))
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+bearerToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	_, err = cc.doRequest(req)
+	return err
+}
+
 func (cc *CloudClient) get(endpoint string) (map[string]interface{}, error) {
 	req, err := http.NewRequest("GET", cc.baseURL+endpoint, nil)
 	if err != nil {
