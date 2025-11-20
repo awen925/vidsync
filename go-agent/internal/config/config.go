@@ -31,6 +31,11 @@ type Config struct {
 	CloudKey  string
 	CloudPort int
 
+	// Supabase configuration
+	SupabaseURL            string
+	SupabaseAnonKey        string
+	SupabaseServiceRoleKey string
+
 	// Device configuration
 	DeviceID string
 
@@ -54,17 +59,20 @@ func Load() (*Config, error) {
 	}
 
 	cfg := &Config{
-		DataDir:         dataDir,
-		APIHost:         "127.0.0.1",
-		APIPort:         29999,
-		SyncthingPort:   8384,
-		SyncthingBinary: "syncthing",
-		NebulaEnabled:   true,
-		NebulaBinary:    "nebula",
-		CloudURL:        getEnv("CLOUD_URL", "http://localhost:5000/api"),
-		CloudKey:        getEnv("CLOUD_API_KEY", ""),
-		CloudPort:       5000,
-		LogLevel:        getEnv("LOG_LEVEL", "info"),
+		DataDir:                dataDir,
+		APIHost:                "127.0.0.1",
+		APIPort:                29999,
+		SyncthingPort:          8384,
+		SyncthingBinary:        "syncthing",
+		NebulaEnabled:          true,
+		NebulaBinary:           "nebula",
+		CloudURL:               getEnv("CLOUD_URL", "http://localhost:5000/api"),
+		CloudKey:               getEnv("CLOUD_API_KEY", ""),
+		CloudPort:              5000,
+		SupabaseURL:            getEnv("SUPABASE_URL", ""),
+		SupabaseAnonKey:        getEnv("SUPABASE_ANON_KEY", ""),
+		SupabaseServiceRoleKey: getEnv("SUPABASE_SERVICE_ROLE_KEY", ""),
+		LogLevel:               getEnv("LOG_LEVEL", "info"),
 	}
 
 	return cfg, nil
