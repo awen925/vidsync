@@ -22,6 +22,10 @@ interface Project {
   created_at?: string;
   device_count?: number;
   owner_id?: string;
+  snapshot_url?: string;
+  snapshot_updated_at?: string;
+  snapshot_file_count?: number;
+  snapshot_total_size?: number;
 }
 
 interface YourProjectsListProps {
@@ -133,9 +137,18 @@ const YourProjectsList: React.FC<YourProjectsListProps> = ({
                     </Typography>
                   }
                   secondary={
-                    <Typography variant="caption" sx={{ color: 'rgba(255, 255, 255, 0.7)' }}>
-                      {project.description}
-                    </Typography>
+                    <Stack spacing={0.25}>
+                      {project.description && (
+                        <Typography variant="caption" sx={{ color: 'rgba(255, 255, 255, 0.7)' }}>
+                          {project.description}
+                        </Typography>
+                      )}
+                      {project.snapshot_file_count !== undefined && (
+                        <Typography variant="caption" sx={{ color: 'rgba(255, 255, 255, 0.6)' }}>
+                          {project.snapshot_file_count?.toLocaleString()} files • {((project.snapshot_total_size || 0) / (1024 * 1024)).toFixed(1)} MB
+                        </Typography>
+                      )}
+                    </Stack>
                   }
                 />
               </ListItemButton>

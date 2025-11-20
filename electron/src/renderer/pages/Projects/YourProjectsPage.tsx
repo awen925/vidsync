@@ -31,6 +31,10 @@ interface Project {
   local_path?: string;
   created_at?: string;
   device_count?: number;
+  snapshot_url?: string;
+  snapshot_updated_at?: string;
+  snapshot_file_count?: number;
+  snapshot_total_size?: number;
 }
 
 interface FileItem {
@@ -203,6 +207,47 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
     return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
   };
 
+  // Poll for snapshot completion with exponential backoff and retry logic
+  const pollForSnapshotCompletion = async (
+    projectId: string,
+    maxWaitSeconds: number = 300
+  ): Promise<boolean> => {
+    const pollStartTime = Date.now();
+    const MAX_POLL_TIMEOUT = maxWaitSeconds * 1000;
+    let pollInterval = 1000; // Start with 1 second
+    const MAX_POLL_INTERVAL = 10000; // Cap at 10 seconds
+    let consecutiveErrors = 0;
+    const MAX_CONSECUTIVE_ERRORS = 3; // Fail if 3 consecutive errors
+
+    while (Date.now() - pollStartTime < MAX_POLL_TIMEOUT) {
+      try {
+        const statusResponse = await (window as any).api.getProjectStatus(projectId);
+        consecutiveErrors = 0; // Reset error counter on success
+
+        // Check if snapshot is ready by looking for snapshot_url in the response
+        if (statusResponse && statusResponse.snapshot_url) {
+          console.log('✓ Snapshot ready:', statusResponse.snapshot_url);
+          return true; // Success!
+        }
+      } catch (statusErr) {
+        consecutiveErrors++;
+        console.debug(`Status check failed (${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS}):`, statusErr);
+
+        // Fail if too many consecutive errors
+        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+          console.error('Too many consecutive polling errors, stopping');
+          return false;
+        }
+      }
+
+      // Wait before next poll, with exponential backoff
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+      pollInterval = Math.min(pollInterval * 1.5, MAX_POLL_INTERVAL); // Increase interval up to max
+    }
+
+    return false; // Timeout reached
+  };
+
   const handleCreateProject = async () => {
     if (!newProjectName.trim()) return;
     setCreatingProject(true);
@@ -228,31 +273,13 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
 
       const projectId = response.projectId;
 
-      // Start polling for snapshot completion (with timeout of 5 minutes)
+      // Start polling for snapshot completion with exponential backoff
       setCreationStatus('Generating file snapshot...');
-      const pollStartTime = Date.now();
-      const POLL_TIMEOUT = 5 * 60 * 1000; // 5 minutes
-      const POLL_INTERVAL = 1000; // 1 second
-      let snapshotReady = false;
+      const snapshotReady = await pollForSnapshotCompletion(projectId, 300); // 5 minute timeout
 
-      while (!snapshotReady && Date.now() - pollStartTime < POLL_TIMEOUT) {
-        await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL));
-
-        try {
-          const statusResponse = await (window as any).api.getProjectStatus(projectId);
-          
-          // Check if snapshot is ready by looking for snapshot_url in the response
-          if (statusResponse && statusResponse.snapshot_url) {
-            snapshotReady = true;
-            setCreationStatus('✓ Snapshot generated!');
-          }
-        } catch (statusErr) {
-          // Keep polling - status endpoint might not be available yet
-          console.debug('Status check returned:', statusErr);
-        }
-      }
-
-      if (!snapshotReady) {
+      if (snapshotReady) {
+        setCreationStatus('✓ Snapshot generated!');
+      } else {
         console.warn('Snapshot generation timeout - proceeding anyway');
         setCreationStatus('Note: Snapshot still generating in background...');
       }

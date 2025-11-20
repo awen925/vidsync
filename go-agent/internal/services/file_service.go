@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/vidsync/agent/internal/api"
@@ -239,7 +240,46 @@ func (fs *FileService) GenerateSnapshot(ctx context.Context, projectID, accessTo
 // The cloud API endpoint expects: POST /projects/{projectId}/snapshot
 // Body: { snapshot: <snapshot_json>, syncStatus: "completed" }
 // Authorization: Bearer <accessToken>
+// Implements retry logic: 3 attempts with exponential backoff (1s, 2s, 4s)
 func (fs *FileService) uploadSnapshotToCloud(ctx context.Context, projectID string, snapshotJSON []byte, accessToken string) (string, error) {
+	const maxRetries = 3
+	const initialBackoff = 1 * time.Second
+
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		// Execute upload attempt
+		snapshotURL, err := fs.uploadSnapshotAttempt(ctx, projectID, snapshotJSON, accessToken)
+		if err == nil {
+			return snapshotURL, nil
+		}
+
+		lastErr = err
+
+		// Check if error is retryable
+		if !fs.isRetryableError(err) {
+			fs.logger.Error("[FileService] Non-retryable error, failing immediately: %v", err)
+			return "", err
+		}
+
+		// Don't retry after last attempt
+		if attempt < maxRetries-1 {
+			backoff := initialBackoff * time.Duration(1<<uint(attempt)) // 1s, 2s, 4s
+			fs.logger.Warn("[FileService] Upload attempt %d/%d failed, retrying in %v: %v", attempt+1, maxRetries, backoff, err)
+			
+			select {
+			case <-time.After(backoff):
+				// Continue to next attempt
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+		}
+	}
+
+	return "", fmt.Errorf("upload failed after %d attempts: %w", maxRetries, lastErr)
+}
+
+// uploadSnapshotAttempt performs a single upload attempt
+func (fs *FileService) uploadSnapshotAttempt(ctx context.Context, projectID string, snapshotJSON []byte, accessToken string) (string, error) {
 	endpoint := fmt.Sprintf("%s/projects/%s/snapshot", fs.cloudClient.GetBaseURL(), projectID)
 
 	// Parse the snapshot JSON to get its structure
@@ -293,6 +333,50 @@ func (fs *FileService) uploadSnapshotToCloud(ctx context.Context, projectID stri
 	}
 
 	return "", fmt.Errorf("no snapshot URL in response")
+}
+
+// isRetryableError determines if an error should trigger a retry
+func (fs *FileService) isRetryableError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	errStr := err.Error()
+
+	// Retryable: Network errors, timeouts, 5xx errors
+	retryablePatterns := []string{
+		"connection refused",
+		"connection reset",
+		"timeout",
+		"temporary failure",
+		"500",
+		"502",
+		"503",
+		"504",
+	}
+
+	for _, pattern := range retryablePatterns {
+		if strings.Contains(strings.ToLower(errStr), pattern) {
+			return true
+		}
+	}
+
+	// Non-retryable: 4xx errors (except 408, 429), parsing errors, auth errors
+	nonRetryablePatterns := []string{
+		"400",
+		"401",
+		"403",
+		"404",
+	}
+
+	for _, pattern := range nonRetryablePatterns {
+		if strings.Contains(errStr, pattern) {
+			return false
+		}
+	}
+
+	// Default to non-retryable for unknown errors
+	return false
 }
 
 // buildTree converts flat file list to hierarchical structure

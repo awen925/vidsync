@@ -2383,12 +2383,9 @@ router.post('/:projectId/snapshot', authMiddleware, async (req: Request, res: Re
     const updatePayload: any = {
       snapshot_url: snapshotUrl,
       snapshot_updated_at: new Date().toISOString(),
+      snapshot_file_count: fileCount,
+      snapshot_total_size: totalSize,
     };
-    
-    // Add file count and total size if columns exist
-    // These were added in Phase 2d schema migration
-    // (The database schema needs to be updated to include these columns)
-    // For now, we store them in snapshot_url metadata if available
     
     const { error: updateErr } = await supabase
       .from('projects')
@@ -2400,6 +2397,7 @@ router.post('/:projectId/snapshot', authMiddleware, async (req: Request, res: Re
       // Non-blocking error - storage succeeded, DB update is secondary
     } else {
       console.log(`[Snapshot:${projectId}] ✅ Project metadata updated in database`);
+      console.log(`[Snapshot:${projectId}]    Files: ${fileCount}, Size: ${totalSize} bytes`);
     }
     
     // Success response
