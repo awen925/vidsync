@@ -22,6 +22,8 @@ CREATE TABLE public.projects (
   last_synced timestamp with time zone,
   snapshot_url text,                 -- URL to gzip JSON in Supabase Storage
   snapshot_updated_at timestamp with time zone,
+  snapshot_file_count integer,       -- Number of files in snapshot
+  snapshot_total_size bigint,        -- Total size in bytes of all files in snapshot
   created_at timestamp with time zone DEFAULT now(),
   updated_at timestamp with time zone DEFAULT now()
 );

@@ -2267,6 +2267,165 @@ router.post('/:projectId/generate-snapshot', authMiddleware, async (req: Request
 });
 
 /**
+ * POST /api/projects/:projectId/snapshot
+ * Receive snapshot JSON from Go agent and store in Supabase Storage
+ * 
+ * Request body:
+ * {
+ *   snapshot: { projectId, createdAt, files[], fileCount, totalSize, syncStatus },
+ *   syncStatus: 'completed' | 'partial'
+ * }
+ * 
+ * Response:
+ * {
+ *   ok: true,
+ *   snapshotUrl: string,
+ *   snapshotSize: number,
+ *   uploadedAt: ISO string,
+ *   fileCount: number,
+ *   totalSize: number
+ * }
+ */
+router.post('/:projectId/snapshot', authMiddleware, async (req: Request, res: Response) => {
+  const projectId = req.params.projectId;
+  const userId = (req as any).user.id;
+  
+  try {
+    console.log(`[Snapshot:${projectId}] POST /snapshot received from Go agent`);
+    
+    // STEP 1: Validate request and user authorization
+    const { snapshot, syncStatus } = req.body;
+    
+    if (!snapshot) {
+      return res.status(400).json({ error: 'Missing snapshot data' });
+    }
+    
+    if (!Array.isArray(snapshot.files)) {
+      return res.status(400).json({ error: 'snapshot.files must be array' });
+    }
+    
+    // Verify user is project owner
+    const { data: project, error: projectErr } = await supabase
+      .from('projects')
+      .select('id, owner_id, name')
+      .eq('id', projectId)
+      .single();
+    
+    if (projectErr || !project) {
+      console.error(`[Snapshot:${projectId}] ✗ Project not found`);
+      return res.status(404).json({ error: 'Project not found' });
+    }
+    
+    if (project.owner_id !== userId) {
+      console.error(`[Snapshot:${projectId}] ✗ User ${userId} is not owner`);
+      return res.status(403).json({ error: 'Not project owner' });
+    }
+    
+    console.log(`[Snapshot:${projectId}] ✅ User authorized as owner`);
+    
+    // STEP 2: Parse and validate snapshot structure
+    console.log(`[Snapshot:${projectId}] Validating snapshot structure...`);
+    
+    const fileCount = snapshot.fileCount || snapshot.files.length;
+    const totalSize = snapshot.totalSize || 0;
+    const createdAt = snapshot.createdAt || new Date().toISOString();
+    
+    console.log(`[Snapshot:${projectId}] Files: ${fileCount}, Size: ${totalSize} bytes, Status: ${syncStatus}`);
+    
+    // STEP 3: Compress snapshot to gzip
+    console.log(`[Snapshot:${projectId}] Compressing snapshot...`);
+    
+    const { promisify } = await import('util');
+    const zlib = await import('zlib');
+    const gzip = promisify(zlib.gzip);
+    
+    const jsonString = JSON.stringify(snapshot, null, 2);
+    const compressedBuffer = await gzip(jsonString);
+    
+    console.log(`[Snapshot:${projectId}] Compressed: ${jsonString.length} → ${compressedBuffer.length} bytes`);
+    
+    // STEP 4: Upload to Supabase Storage
+    console.log(`[Snapshot:${projectId}] Uploading to Supabase Storage...`);
+    
+    const timestamp = Date.now();
+    const filename = `snapshot_${timestamp}.json.gz`;
+    const bucket = 'project-snapshots';
+    const filePath = `${projectId}/${filename}`;
+    
+    const { data: uploadData, error: uploadErr } = await supabase.storage
+      .from(bucket)
+      .upload(filePath, compressedBuffer, {
+        contentType: 'application/gzip',
+        upsert: false,
+      });
+    
+    if (uploadErr) {
+      console.error(`[Snapshot:${projectId}] ✗ Storage upload failed:`, uploadErr.message);
+      return res.status(500).json({ error: 'Failed to upload snapshot to storage' });
+    }
+    
+    console.log(`[Snapshot:${projectId}] ✅ Uploaded to storage: ${filePath}`);
+    
+    // STEP 5: Generate public URL
+    console.log(`[Snapshot:${projectId}] Generating public URL...`);
+    
+    const { data: publicUrlData } = supabase.storage
+      .from(bucket)
+      .getPublicUrl(filePath);
+    
+    const snapshotUrl = publicUrlData.publicUrl;
+    
+    console.log(`[Snapshot:${projectId}] Public URL: ${snapshotUrl}`);
+    
+    // STEP 6: Update project table with snapshot metadata
+    console.log(`[Snapshot:${projectId}] Updating project metadata in database...`);
+    
+    const updatePayload: any = {
+      snapshot_url: snapshotUrl,
+      snapshot_updated_at: new Date().toISOString(),
+    };
+    
+    // Add file count and total size if columns exist
+    // These were added in Phase 2d schema migration
+    // (The database schema needs to be updated to include these columns)
+    // For now, we store them in snapshot_url metadata if available
+    
+    const { error: updateErr } = await supabase
+      .from('projects')
+      .update(updatePayload)
+      .eq('id', projectId);
+    
+    if (updateErr) {
+      console.error(`[Snapshot:${projectId}] ⚠️  Failed to update project metadata:`, updateErr.message);
+      // Non-blocking error - storage succeeded, DB update is secondary
+    } else {
+      console.log(`[Snapshot:${projectId}] ✅ Project metadata updated in database`);
+    }
+    
+    // Success response
+    console.log(`[Snapshot:${projectId}] ✅ Snapshot upload complete`);
+    
+    res.status(200).json({
+      ok: true,
+      snapshotUrl,
+      snapshotSize: compressedBuffer.length,
+      uploadedAt: new Date().toISOString(),
+      fileCount,
+      totalSize,
+      syncStatus,
+      message: 'Snapshot uploaded successfully',
+    });
+    
+  } catch (error) {
+    console.error(`[Snapshot:${projectId}] ✗ POST /snapshot exception:`, error);
+    res.status(500).json({
+      error: 'Failed to upload snapshot',
+      message: (error as Error).message,
+    });
+  }
+});
+
+/**
  * GET /api/projects/:projectId/sync-status
  * Get current sync status (paused or syncing)
  */

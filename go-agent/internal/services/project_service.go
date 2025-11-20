@@ -271,3 +271,24 @@ func (ps *ProjectService) RemoveDevice(ctx context.Context, projectID, deviceID,
 	ps.logger.Info("[ProjectService] Device removed successfully from project: %s", projectID)
 	return nil
 }
+
+// GetProjectStatus gets project snapshot and sync status
+// Used for polling during snapshot generation
+func (ps *ProjectService) GetProjectStatus(ctx context.Context, projectID string) (map[string]interface{}, error) {
+	ps.logger.Debug("[ProjectService] Getting project status: %s", projectID)
+
+	// Get Syncthing folder status
+	status, err := ps.syncClient.GetFolderStatus(projectID)
+	if err != nil {
+		ps.logger.Error("[ProjectService] Failed to get folder status: %v", err)
+		return nil, err
+	}
+
+	// Return current project status
+	// In a real implementation, this could check a database or cache for snapshot generation status
+	// For now, just return Syncthing status
+	return map[string]interface{}{
+		"projectId": projectID,
+		"status":    status,
+	}, nil
+}

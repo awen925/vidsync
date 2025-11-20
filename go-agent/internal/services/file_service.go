@@ -98,12 +98,12 @@ func (fs *FileService) GetFileTree(ctx context.Context, projectID string) (map[s
 
 // SnapshotMetadata represents snapshot metadata for storage
 type SnapshotMetadata struct {
-	ProjectID   string          `json:"projectId"`
-	CreatedAt   time.Time       `json:"createdAt"`
-	Files       []api.FileInfo  `json:"files"`
-	FileCount   int             `json:"fileCount"`
-	TotalSize   int64           `json:"totalSize"`
-	SyncStatus  interface{}     `json:"syncStatus"`
+	ProjectID  string         `json:"projectId"`
+	CreatedAt  time.Time      `json:"createdAt"`
+	Files      []api.FileInfo `json:"files"`
+	FileCount  int            `json:"fileCount"`
+	TotalSize  int64          `json:"totalSize"`
+	SyncStatus interface{}    `json:"syncStatus"`
 }
 
 // WaitForScanCompletion waits for Syncthing folder to complete scanning
@@ -226,26 +226,46 @@ func (fs *FileService) GenerateSnapshot(ctx context.Context, projectID, accessTo
 
 	fs.logger.Info("[FileService] Snapshot generated successfully for project: %s", projectID)
 	return map[string]interface{}{
-		"ok":           true,
-		"projectId":    projectID,
-		"fileCount":    len(files),
-		"totalSize":    totalSize,
-		"snapshotUrl":  snapshotURL,
-		"createdAt":    snapshot.CreatedAt,
+		"ok":          true,
+		"projectId":   projectID,
+		"fileCount":   len(files),
+		"totalSize":   totalSize,
+		"snapshotUrl": snapshotURL,
+		"createdAt":   snapshot.CreatedAt,
 	}, nil
 }
 
 // uploadSnapshotToCloud sends snapshot JSON to Supabase Storage via cloud API
-// The cloud API endpoint expects: POST /projects/{projectId}/snapshot with body and authorization
+// The cloud API endpoint expects: POST /projects/{projectId}/snapshot
+// Body: { snapshot: <snapshot_json>, syncStatus: "completed" }
+// Authorization: Bearer <accessToken>
 func (fs *FileService) uploadSnapshotToCloud(ctx context.Context, projectID string, snapshotJSON []byte, accessToken string) (string, error) {
 	endpoint := fmt.Sprintf("%s/projects/%s/snapshot", fs.cloudClient.GetBaseURL(), projectID)
 
-	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, io.NopCloser(bytes.NewReader(snapshotJSON)))
+	// Parse the snapshot JSON to get its structure
+	var snapshotData interface{}
+	if err := json.Unmarshal(snapshotJSON, &snapshotData); err != nil {
+		return "", fmt.Errorf("failed to parse snapshot JSON: %w", err)
+	}
+
+	// Wrap snapshot in request format expected by cloud API
+	// { snapshot: <data>, syncStatus: "completed" }
+	requestBody := map[string]interface{}{
+		"snapshot":   snapshotData,
+		"syncStatus": "completed",
+	}
+
+	requestJSON, err := json.Marshal(requestBody)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, io.NopCloser(bytes.NewReader(requestJSON)))
 	if err != nil {
 		return "", err
 	}
 
-	// Set headers for file upload
+	// Set headers for JSON request
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", accessToken))
 	req.Header.Set("Content-Type", "application/json")
 
@@ -278,9 +298,9 @@ func (fs *FileService) uploadSnapshotToCloud(ctx context.Context, projectID stri
 // buildTree converts flat file list to hierarchical structure
 func buildTree(files []api.FileInfo) map[string]interface{} {
 	root := map[string]interface{}{
-		"name":        "root",
-		"type":        "directory",
-		"children":    []interface{}{},
+		"name":     "root",
+		"type":     "directory",
+		"children": []interface{}{},
 	}
 
 	// Build a map for quick lookup
@@ -347,4 +367,3 @@ func buildTree(files []api.FileInfo) map[string]interface{} {
 
 	return root
 }
-

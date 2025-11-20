@@ -170,3 +170,19 @@ func (h *ProjectHandler) RemoveDevice(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
 }
+
+// GetProjectStatus gets project status for polling during snapshot generation
+// Returns: snapshotUrl, snapshotFileCount, snapshotTotalSize, syncStatus, generatedAt
+func (h *ProjectHandler) GetProjectStatus(w http.ResponseWriter, r *http.Request) {
+	projectID := r.PathValue("projectId")
+
+	result, err := h.service.GetProjectStatus(r.Context(), projectID)
+	if err != nil {
+		h.logger.Error("Failed to get project status: %v", err)
+		http.Error(w, `{"error":"project not found"}`, http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}

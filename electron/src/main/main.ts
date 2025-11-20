@@ -289,6 +289,46 @@ ipcMain.handle('project:pauseSync', async (_ev, { projectId, accessToken }) => {
   }
 });
 
+// Create project with snapshot generation (Go agent orchestrates everything)
+ipcMain.handle('project:createWithSnapshot', async (_ev, { name, description, localPath, accessToken }) => {
+  try {
+    // Get device info from Syncthing
+    const deviceId = await syncthingManager.getDeviceIdForProject('__app_shared__');
+    if (!deviceId) {
+      return { ok: false, error: 'Failed to get device ID' };
+    }
+    
+    // For now, use a placeholder for ownerId - it should come from the auth context
+    // In a real implementation, this would be fetched from the user session
+    const ownerId = 'current-user'; // This should be replaced with actual user ID
+    const projectId = require('crypto').randomUUID(); // Generate a new project ID
+    
+    // Call Go service which creates project + Syncthing folder + generates snapshot
+    const result = await goAgentClient.createProjectWithSnapshot(
+      projectId,
+      name,
+      localPath || '',
+      deviceId,
+      ownerId,
+      accessToken || ''
+    );
+    return result;
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+});
+
+// Get project status for polling during snapshot generation
+ipcMain.handle('project:getStatus', async (_ev, projectId: string) => {
+  try {
+    // Call Go service to get current project status
+    const result = await goAgentClient.getProjectStatus(projectId);
+    return result;
+  } catch (e) {
+    return { error: String(e) };
+  }
+});
+
 // Remove device from Syncthing folder (member)
 ipcMain.handle('project:removeDeviceFromFolder', async (_ev, { projectId, deviceId, accessToken }) => {
   try {

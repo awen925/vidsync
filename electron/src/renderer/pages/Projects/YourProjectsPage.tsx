@@ -214,32 +214,49 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
       await new Promise(resolve => setTimeout(resolve, 300));
       
       setCreationStatus('Setting up Syncthing folder...');
-      
-      const response = await cloudAPI.post('/projects', {
+
+      // Create project through Go agent (which handles cloud API + Syncthing + snapshot generation)
+      const response = await (window as any).api.createProjectWithSnapshot({
         name: newProjectName,
-        description: newProjectDesc,
-        local_path: newProjectLocalPath || null,
+        description: newProjectDesc || undefined,
+        localPath: newProjectLocalPath || undefined,
       });
 
-      setCreationStatus('Scanning project files...');
-      await new Promise(resolve => setTimeout(resolve, 200));
+      if (!response.ok) {
+        throw new Error(response.error || 'Failed to create project');
+      }
 
-      setCreationStatus('Collecting file metadata...');
+      const projectId = response.projectId;
 
-      // If project has a local_path, initialize Syncthing for it
-      if (response.data.project && newProjectLocalPath) {
+      // Start polling for snapshot completion (with timeout of 5 minutes)
+      setCreationStatus('Generating file snapshot...');
+      const pollStartTime = Date.now();
+      const POLL_TIMEOUT = 5 * 60 * 1000; // 5 minutes
+      const POLL_INTERVAL = 1000; // 1 second
+      let snapshotReady = false;
+
+      while (!snapshotReady && Date.now() - pollStartTime < POLL_TIMEOUT) {
+        await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL));
+
         try {
-          setCreationStatus('Starting file synchronization...');
-          await (window as any).api.syncthingStartForProject(response.data.project.id, newProjectLocalPath);
-        } catch (syncError) {
-          console.error('Failed to start Syncthing for project:', syncError);
-          // Continue anyway - Syncthing setup failure shouldn't block project creation
+          const statusResponse = await (window as any).api.getProjectStatus(projectId);
+          
+          // Check if snapshot is ready by looking for snapshot_url in the response
+          if (statusResponse && statusResponse.snapshot_url) {
+            snapshotReady = true;
+            setCreationStatus('✓ Snapshot generated!');
+          }
+        } catch (statusErr) {
+          // Keep polling - status endpoint might not be available yet
+          console.debug('Status check returned:', statusErr);
         }
       }
 
-      setCreationStatus('Finalizing project setup...');
-      await new Promise(resolve => setTimeout(resolve, 300));
-      
+      if (!snapshotReady) {
+        console.warn('Snapshot generation timeout - proceeding anyway');
+        setCreationStatus('Note: Snapshot still generating in background...');
+      }
+
       setCreationStatus('✓ Project created successfully!');
       setTimeout(() => {
         setCreateDialogOpen(false);
@@ -255,7 +272,7 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
       setCreatingProject(false);
       setCreationStatus('');
       
-      // Check if this is a duplicate path error
+      // Check if this is a duplicate path error (from Go agent)
       if (error.response?.status === 409 && error.response?.data?.code === 'DUPLICATE_PROJECT_PATH') {
         setDuplicateErrorData({
           path: newProjectLocalPath || '',

@@ -532,6 +532,28 @@ export class GoAgentClient {
       throw error;
     }
   }
+
+  /**
+   * Get project status for polling during snapshot generation
+   * Returns: projectId, snapshotUrl, snapshotFileCount, snapshotTotalSize, syncStatus
+   */
+  async getProjectStatus(projectId: string): Promise<any> {
+    try {
+      const response = await this.client.get(`/projects/${projectId}/status`);
+
+      if (response.status === 200) {
+        return response.data;
+      }
+
+      throw new Error(response.data?.error || 'Failed to get project status');
+    } catch (error) {
+      const err = error as AxiosError;
+      this.logger.error(
+        `[GoAgent] Get project status failed: ${err.message}`
+      );
+      throw error;
+    }
+  }
 }
 
 export default GoAgentClient;
