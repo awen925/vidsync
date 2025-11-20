@@ -89,6 +89,50 @@ export class GoAgentClient {
   }
 
   /**
+   * Create a new project WITH snapshot generation
+   * Proper async event order:
+   * 1. Create in cloud database
+   * 2. Get projectId from response
+   * 3. Create Syncthing folder
+   * 4. Listen for folder scan completion (background)
+   * 5. Generate snapshot and upload to storage (background)
+   */
+  async createProjectWithSnapshot(
+    projectId: string,
+    name: string,
+    localPath: string,
+    deviceId: string,
+    ownerId: string,
+    accessToken: string
+  ): Promise<{ ok: boolean; projectId?: string; error?: string }> {
+    try {
+      const response = await this.client.post('/projects/with-snapshot', {
+        projectId,
+        name,
+        localPath,
+        deviceId,
+        ownerId,
+        accessToken,
+      });
+
+      if (response.status === 201 || response.status === 200) {
+        this.logger.info(
+          `[GoAgent] Project created with snapshot generation: ${response.data?.projectId || projectId}`
+        );
+        return { ok: true, projectId: response.data?.projectId || projectId };
+      }
+
+      return { ok: false, error: response.data?.error || 'Unknown error' };
+    } catch (error) {
+      const err = error as AxiosError;
+      this.logger.error(
+        `[GoAgent] Create project with snapshot failed: ${err.message}`
+      );
+      throw error;
+    }
+  }
+
+  /**
    * Get project details with Syncthing status
    */
   async getProject(

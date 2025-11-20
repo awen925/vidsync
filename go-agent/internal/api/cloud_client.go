@@ -27,6 +27,11 @@ func NewCloudClient(baseURL, apiKey string) *CloudClient {
 	}
 }
 
+// GetBaseURL returns the base URL of the cloud client
+func (cc *CloudClient) GetBaseURL() string {
+	return cc.baseURL
+}
+
 // RegisterDevice registers device with cloud
 func (cc *CloudClient) RegisterDevice(deviceID, deviceName, platform string) (map[string]interface{}, error) {
 	payload := map[string]interface{}{

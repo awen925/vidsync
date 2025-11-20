@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/vidsync/agent/internal/api"
 	"github.com/vidsync/agent/internal/util"
@@ -12,6 +13,7 @@ import (
 type ProjectService struct {
 	syncClient  *api.SyncthingClient
 	cloudClient *api.CloudClient
+	fileService *FileService
 	logger      *util.Logger
 }
 
@@ -20,6 +22,7 @@ func NewProjectService(syncClient *api.SyncthingClient, cloudClient *api.CloudCl
 	return &ProjectService{
 		syncClient:  syncClient,
 		cloudClient: cloudClient,
+		fileService: NewFileService(syncClient, cloudClient, logger),
 		logger:      logger,
 	}
 }
@@ -58,12 +61,12 @@ func (ps *ProjectService) CreateProject(ctx context.Context, req *CreateProjectR
 	_, err = ps.cloudClient.PostWithAuth(
 		"/projects",
 		map[string]interface{}{
-			"projectId":   req.ProjectID,
-			"name":        req.Name,
-			"localPath":   req.LocalPath,
-			"deviceId":    req.DeviceID,
-			"ownerId":     req.OwnerID,
-			"status":      "active",
+			"projectId": req.ProjectID,
+			"name":      req.Name,
+			"localPath": req.LocalPath,
+			"deviceId":  req.DeviceID,
+			"ownerId":   req.OwnerID,
+			"status":    "active",
 		},
 		req.AccessToken,
 	)
@@ -76,6 +79,82 @@ func (ps *ProjectService) CreateProject(ctx context.Context, req *CreateProjectR
 
 	ps.logger.Info("[ProjectService] Project created successfully: %s", req.ProjectID)
 	return &CreateProjectResponse{OK: true, ProjectID: req.ProjectID}, nil
+}
+
+// CreateProjectWithSnapshot implements the full async event order:
+// 1. Create project record in cloud database
+// 2. Get projectId from cloud response
+// 3. Create shared folder in Syncthing using projectId
+// 4. Listen for folder scan completion
+// 5. Browse files and generate JSON snapshot
+// 6. Upload snapshot to Supabase storage
+// This method is used when creating a project with an existing local path
+func (ps *ProjectService) CreateProjectWithSnapshot(ctx context.Context, req *CreateProjectRequest) (*CreateProjectResponse, error) {
+	ps.logger.Info("[ProjectService] Creating project WITH snapshot generation: %s", req.Name)
+
+	// STEP 1: Create project in cloud database first
+	ps.logger.Info("[ProjectService] STEP 1: Creating project in cloud database...")
+	cloudResponse, err := ps.cloudClient.PostWithAuth(
+		"/projects",
+		map[string]interface{}{
+			"name":      req.Name,
+			"localPath": req.LocalPath,
+			"deviceId":  req.DeviceID,
+			"ownerId":   req.OwnerID,
+			"status":    "active",
+		},
+		req.AccessToken,
+	)
+	if err != nil {
+		ps.logger.Error("[ProjectService] Failed to create project in cloud: %v", err)
+		return &CreateProjectResponse{OK: false, Error: err.Error()}, err
+	}
+
+	// Extract projectId from cloud response
+	projectID := req.ProjectID
+	if cloudProjectID, ok := cloudResponse["projectId"].(string); ok && cloudProjectID != "" {
+		projectID = cloudProjectID
+		ps.logger.Info("[ProjectService] Cloud assigned projectId: %s", projectID)
+	}
+
+	// STEP 2: Create Syncthing folder
+	ps.logger.Info("[ProjectService] STEP 2: Creating Syncthing folder...")
+	err = ps.syncClient.AddFolder(projectID, req.Name, req.LocalPath)
+	if err != nil {
+		ps.logger.Error("[ProjectService] Failed to create Syncthing folder: %v", err)
+		return &CreateProjectResponse{OK: false, Error: err.Error()}, err
+	}
+	ps.logger.Info("[ProjectService] Syncthing folder created: %s", projectID)
+
+	// STEP 3: Asynchronously generate snapshot (don't block project creation)
+	// Return success immediately, snapshot generation happens in background
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+
+		ps.logger.Info("[ProjectService] STEP 3: Starting background snapshot generation...")
+
+		// Wait for folder scan to complete
+		err := ps.fileService.WaitForScanCompletion(ctx, projectID, 120)
+		if err != nil {
+			ps.logger.Warn("[ProjectService] Failed to wait for scan: %v", err)
+			return
+		}
+
+		// Generate snapshot
+		ps.logger.Info("[ProjectService] STEP 4: Generating file snapshot...")
+		_, err = ps.fileService.GenerateSnapshot(ctx, projectID, req.AccessToken)
+		if err != nil {
+			ps.logger.Warn("[ProjectService] Failed to generate snapshot: %v", err)
+			// Don't fail - snapshot is optional
+			return
+		}
+
+		ps.logger.Info("[ProjectService] Snapshot generation completed for: %s", projectID)
+	}()
+
+	ps.logger.Info("[ProjectService] Project created successfully (snapshot generation in progress): %s", projectID)
+	return &CreateProjectResponse{OK: true, ProjectID: projectID}, nil
 }
 
 // GetProjectResponse is the response from getting project details

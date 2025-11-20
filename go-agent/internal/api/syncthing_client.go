@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -97,6 +99,53 @@ func (sc *SyncthingClient) GetStatus() (map[string]interface{}, error) {
 // GetFolderStatus gets folder status
 func (sc *SyncthingClient) GetFolderStatus(folderID string) (map[string]interface{}, error) {
 	return sc.get(fmt.Sprintf("/rest/db/status?folder=%s", folderID))
+}
+
+// FileInfo represents file metadata for snapshot
+type FileInfo struct {
+	Name        string    `json:"name"`
+	Path        string    `json:"path"`
+	Size        int64     `json:"size"`
+	IsDirectory bool      `json:"isDirectory"`
+	ModTime     time.Time `json:"modTime"`
+	Hash        string    `json:"hash,omitempty"`
+}
+
+// BrowseFiles returns a hierarchical file tree from a filesystem path
+// Used after Syncthing folder is scanned
+func (sc *SyncthingClient) BrowseFiles(folderPath string, maxDepth int) ([]FileInfo, error) {
+	var files []FileInfo
+	err := filepath.Walk(folderPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil // Skip inaccessible files
+		}
+
+		// Calculate depth
+		relPath, _ := filepath.Rel(folderPath, path)
+		depth := len(filepath.SplitList(relPath))
+		if maxDepth > 0 && depth > maxDepth {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		files = append(files, FileInfo{
+			Name:        info.Name(),
+			Path:        relPath,
+			Size:        info.Size(),
+			IsDirectory: info.IsDir(),
+			ModTime:     info.ModTime(),
+		})
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to browse files: %w", err)
+	}
+
+	return files, nil
 }
 
 // RemoveFolder removes a folder from Syncthing

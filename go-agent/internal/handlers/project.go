@@ -57,6 +57,45 @@ func (h *ProjectHandler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(result)
 }
 
+// CreateProjectWithSnapshot creates a new project and generates snapshot async
+// Implements proper async event order:
+// 1. Create in cloud
+// 2. Create Syncthing folder
+// 3. Generate snapshot (background process)
+func (h *ProjectHandler) CreateProjectWithSnapshot(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ProjectID   string `json:"projectId"`
+		Name        string `json:"name"`
+		LocalPath   string `json:"localPath"`
+		DeviceID    string `json:"deviceId"`
+		OwnerID     string `json:"ownerId"`
+		AccessToken string `json:"accessToken"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
+		return
+	}
+
+	result, err := h.service.CreateProjectWithSnapshot(r.Context(), &services.CreateProjectRequest{
+		ProjectID:   req.ProjectID,
+		Name:        req.Name,
+		LocalPath:   req.LocalPath,
+		DeviceID:    req.DeviceID,
+		OwnerID:     req.OwnerID,
+		AccessToken: req.AccessToken,
+	})
+
+	if err != nil {
+		h.logger.Error("Failed to create project: %v", err)
+		http.Error(w, `{"error":"failed to create project"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
+
 // GetProject gets project details with Syncthing status
 func (h *ProjectHandler) GetProject(w http.ResponseWriter, r *http.Request) {
 	projectID := r.PathValue("projectId")

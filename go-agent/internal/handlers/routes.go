@@ -37,6 +37,7 @@ func NewRouter(
 func (r *Router) RegisterRoutes(mux *http.ServeMux) {
 	// Project endpoints
 	mux.HandleFunc("POST /api/v1/projects", r.projectHandler.CreateProject)
+	mux.HandleFunc("POST /api/v1/projects/with-snapshot", r.projectHandler.CreateProjectWithSnapshot)
 	mux.HandleFunc("GET /api/v1/projects/{projectId}", r.projectHandler.GetProject)
 	mux.HandleFunc("DELETE /api/v1/projects/{projectId}", r.projectHandler.DeleteProject)
 	mux.HandleFunc("POST /api/v1/projects/{projectId}/devices", r.projectHandler.AddDevice)
