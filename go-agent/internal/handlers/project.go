@@ -25,17 +25,29 @@ func NewProjectHandler(service *services.ProjectService, logger *util.Logger) *P
 // CreateProject creates a new project with Syncthing folder
 func (h *ProjectHandler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ProjectID   string `json:"projectId"`
-		Name        string `json:"name"`
-		LocalPath   string `json:"localPath"`
-		DeviceID    string `json:"deviceId"`
-		OwnerID     string `json:"ownerId"`
-		AccessToken string `json:"accessToken"`
+		ProjectID string `json:"projectId"`
+		Name      string `json:"name"`
+		LocalPath string `json:"localPath"`
+		DeviceID  string `json:"deviceId"`
+		OwnerID   string `json:"ownerId"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
 		return
+	}
+
+	// Extract JWT token from Authorization header
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		http.Error(w, `{"error":"missing authorization header"}`, http.StatusUnauthorized)
+		return
+	}
+
+	// Expected format: "Bearer <token>"
+	accessToken := authHeader
+	if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+		accessToken = authHeader[7:]
 	}
 
 	result, err := h.service.CreateProject(r.Context(), &services.CreateProjectRequest{
@@ -44,7 +56,7 @@ func (h *ProjectHandler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		LocalPath:   req.LocalPath,
 		DeviceID:    req.DeviceID,
 		OwnerID:     req.OwnerID,
-		AccessToken: req.AccessToken,
+		AccessToken: accessToken,
 	})
 
 	if err != nil {
@@ -64,17 +76,29 @@ func (h *ProjectHandler) CreateProject(w http.ResponseWriter, r *http.Request) {
 // 3. Generate snapshot (background process)
 func (h *ProjectHandler) CreateProjectWithSnapshot(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ProjectID   string `json:"projectId"`
-		Name        string `json:"name"`
-		LocalPath   string `json:"localPath"`
-		DeviceID    string `json:"deviceId"`
-		OwnerID     string `json:"ownerId"`
-		AccessToken string `json:"accessToken"`
+		ProjectID string `json:"projectId"`
+		Name      string `json:"name"`
+		LocalPath string `json:"localPath"`
+		DeviceID  string `json:"deviceId"`
+		OwnerID   string `json:"ownerId"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
 		return
+	}
+
+	// Extract JWT token from Authorization header
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		http.Error(w, `{"error":"missing authorization header"}`, http.StatusUnauthorized)
+		return
+	}
+
+	// Expected format: "Bearer <token>"
+	accessToken := authHeader
+	if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+		accessToken = authHeader[7:]
 	}
 
 	result, err := h.service.CreateProjectWithSnapshot(r.Context(), &services.CreateProjectRequest{
@@ -83,7 +107,7 @@ func (h *ProjectHandler) CreateProjectWithSnapshot(w http.ResponseWriter, r *htt
 		LocalPath:   req.LocalPath,
 		DeviceID:    req.DeviceID,
 		OwnerID:     req.OwnerID,
-		AccessToken: req.AccessToken,
+		AccessToken: accessToken,
 	})
 
 	if err != nil {

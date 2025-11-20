@@ -125,8 +125,8 @@ func (cc *CloudClient) PostWithAuth(endpoint string, payload interface{}, bearer
 		return nil, err
 	}
 
+	// Set Bearer token - will not be overwritten by doRequest since we check if already set
 	req.Header.Set("Authorization", "Bearer "+bearerToken)
-	req.Header.Set("Content-Type", "application/json")
 
 	return cc.doRequest(req)
 }
@@ -143,8 +143,8 @@ func (cc *CloudClient) PutWithAuth(endpoint string, payload interface{}, bearerT
 		return err
 	}
 
+	// Set Bearer token - will not be overwritten by doRequest since we check if already set
 	req.Header.Set("Authorization", "Bearer "+bearerToken)
-	req.Header.Set("Content-Type", "application/json")
 
 	_, err = cc.doRequest(req)
 	return err
@@ -160,8 +160,14 @@ func (cc *CloudClient) get(endpoint string) (map[string]interface{}, error) {
 }
 
 func (cc *CloudClient) doRequest(req *http.Request) (map[string]interface{}, error) {
-	req.Header.Set("Authorization", "Bearer "+cc.apiKey)
-	req.Header.Set("Content-Type", "application/json")
+	// Only set API key if Authorization header is not already set
+	// (PostWithAuth/PutWithAuth set their own Bearer token)
+	if req.Header.Get("Authorization") == "" {
+		req.Header.Set("Authorization", "Bearer "+cc.apiKey)
+	}
+	if req.Header.Get("Content-Type") == "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
 
 	resp, err := cc.client.Do(req)
 	if err != nil {

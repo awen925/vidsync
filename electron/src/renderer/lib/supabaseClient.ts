@@ -10,9 +10,10 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
 
 export const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
-    // Do not persist session in renderer localStorage; we'll manage storing the refresh token securely
-    persistSession: false,
-    detectSessionInUrl: false,
+    // Enable session persistence so getSession() returns the cached session
+    persistSession: true,
+    detectSessionInUrl: true,
+    storage: typeof window !== 'undefined' ? window.localStorage : undefined,
   },
 });
 

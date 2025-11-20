@@ -17,7 +17,7 @@ export class GoAgentClient {
     this.logger = logger;
     this.client = axios.create({
       baseURL: this.baseURL,
-      timeout: 30000,
+      timeout: 300000,
       validateStatus: () => true, // Don't throw on any status
     });
 
@@ -112,7 +112,10 @@ export class GoAgentClient {
         localPath,
         deviceId,
         ownerId,
-        accessToken,
+      }, {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+        },
       });
 
       if (response.status === 201 || response.status === 200) {
