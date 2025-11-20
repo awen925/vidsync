@@ -66,6 +66,10 @@ func (r *Router) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/devices/sync", r.deviceHandler.SyncDevice)
 	mux.HandleFunc("GET /api/v1/devices/{deviceId}/status", r.deviceHandler.GetDeviceStatus)
 
+	// Health check endpoint
+	mux.HandleFunc("GET /api/v1/health", r.HealthCheck)
+	mux.HandleFunc("GET /health", r.HealthCheck)
+
 	r.logger.Info("API routes registered")
 }
 
