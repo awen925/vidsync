@@ -12,6 +12,7 @@ export class GoAgentClient {
   private client: AxiosInstance;
   private logger: any;
   private baseURL = 'http://localhost:5001/api/v1';
+  private cloudAuthToken: string = '';
 
   constructor(logger: any) {
     this.logger = logger;
@@ -26,6 +27,16 @@ export class GoAgentClient {
       this.logger.debug(
         `[GoAgent] ${config.method?.toUpperCase()} ${config.url}`
       );
+      
+      // Add cloud-authorization header if token is set
+      this.logger.debug(
+        `[GoAgent] ${config.method?.toUpperCase()} ${config.url} ${this.cloudAuthToken.substring(0, 10)}`
+      );
+      if (this.cloudAuthToken) {
+        config.headers = config.headers || {};
+        (config.headers as any)['Authorization'] = `Bearer ${this.cloudAuthToken}`;
+      }
+      
       return config;
     });
 
@@ -38,6 +49,24 @@ export class GoAgentClient {
       }
       return response;
     });
+  }
+
+  /**
+   * Set the cloud authorization token (JWT from Supabase)
+   * This token will be sent to Go Agent which forwards it to Cloud API
+   */
+  setCloudAuthToken(token: string): void {
+    this.cloudAuthToken = token;
+    this.logger.debug('[GoAgent] token: ' + token);
+    this.logger.debug('[GoAgent] Cloud auth token set');
+  }
+
+  /**
+   * Clear the cloud authorization token
+   */
+  clearCloudAuthToken(): void {
+    this.cloudAuthToken = '';
+    this.logger.debug('[GoAgent] Cloud auth token cleared');
   }
 
   /**
@@ -65,13 +94,15 @@ export class GoAgentClient {
     accessToken: string
   ): Promise<{ ok: boolean; projectId?: string; error?: string }> {
     try {
+      // Set the token for this request
+      this.setCloudAuthToken(accessToken);
+
       const response = await this.client.post('/projects', {
         projectId,
         name,
         localPath,
         deviceId,
         ownerId,
-        accessToken,
       });
 
       if (response.status === 201 || response.status === 200) {
@@ -106,16 +137,15 @@ export class GoAgentClient {
     accessToken: string
   ): Promise<{ ok: boolean; projectId?: string; error?: string }> {
     try {
+      // Set the token for this request
+      this.setCloudAuthToken(accessToken);
+
       const response = await this.client.post('/projects/with-snapshot', {
         projectId,
         name,
         localPath,
         deviceId,
         ownerId,
-      }, {
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-        },
       });
 
       if (response.status === 201 || response.status === 200) {
@@ -169,9 +199,9 @@ export class GoAgentClient {
     accessToken: string
   ): Promise<{ ok: boolean; error?: string }> {
     try {
-      const response = await this.client.delete(`/projects/${projectId}`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
+      this.setCloudAuthToken(accessToken);
+
+      const response = await this.client.delete(`/projects/${projectId}`);
 
       if (response.status === 200 || response.status === 204) {
         return { ok: true };

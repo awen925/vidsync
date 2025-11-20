@@ -37,10 +37,10 @@ func (h *ProjectHandler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract JWT token from Authorization header
+	// Extract JWT token from cloud-authorization header (sent by Electron via GoAgentClient)
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
-		http.Error(w, `{"error":"missing authorization header"}`, http.StatusUnauthorized)
+		http.Error(w, `{"error":"missing cloud authorization header"}`, http.StatusUnauthorized)
 		return
 	}
 
@@ -88,10 +88,10 @@ func (h *ProjectHandler) CreateProjectWithSnapshot(w http.ResponseWriter, r *htt
 		return
 	}
 
-	// Extract JWT token from Authorization header
+	// Extract JWT token from cloud-authorization header (sent by Electron via GoAgentClient)
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
-		http.Error(w, `{"error":"missing authorization header"}`, http.StatusUnauthorized)
+		http.Error(w, `{"error":"missing cloud authorization header"}`, http.StatusUnauthorized)
 		return
 	}
 
