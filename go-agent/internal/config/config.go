@@ -62,6 +62,7 @@ func Load() (*Config, error) {
 		NebulaEnabled:   true,
 		NebulaBinary:    "nebula",
 		CloudURL:        getEnv("CLOUD_URL", "http://localhost:5000/api"),
+		CloudKey:        getEnv("CLOUD_API_KEY", ""),
 		CloudPort:       5000,
 		LogLevel:        getEnv("LOG_LEVEL", "info"),
 	}
