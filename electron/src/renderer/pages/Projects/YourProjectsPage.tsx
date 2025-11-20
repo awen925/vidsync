@@ -18,6 +18,7 @@ import {
 } from '@mui/material';
 import { Trash2, LinkIcon, Copy, Check, AlertCircle } from 'lucide-react';
 import { cloudAPI } from '../../hooks/useCloudApi';
+import { supabase } from '../../lib/supabaseClient';
 import YourProjectsList from '../../components/Projects/YourProjectsList';
 import YourProjectHeader from '../../components/Projects/YourProjectHeader';
 import YourProjectFilesTab from '../../components/Projects/YourProjectFilesTab';
@@ -263,11 +264,19 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
       
       setCreationStatus('Setting up Syncthing folder...');
 
+      // Get access token from Supabase
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError || !sessionData?.session?.access_token) {
+        throw new Error('Failed to get authentication token. Please log in again.');
+      }
+      const accessToken = sessionData.session.access_token;
+
       // Create project through Go agent (which handles cloud API + Syncthing + snapshot generation)
       const response = await (window as any).api.createProjectWithSnapshot({
         name: newProjectName,
         description: newProjectDesc || undefined,
         localPath: newProjectLocalPath || undefined,
+        accessToken,
       });
 
       if (!response.ok) {
