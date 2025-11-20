@@ -61,8 +61,8 @@ func Load() (*Config, error) {
 		SyncthingBinary: "syncthing",
 		NebulaEnabled:   true,
 		NebulaBinary:    "nebula",
-		CloudURL:        getEnv("CLOUD_URL", "http://localhost:3000"),
-		CloudPort:       3000,
+		CloudURL:        getEnv("CLOUD_URL", "http://localhost:5000/api"),
+		CloudPort:       5000,
 		LogLevel:        getEnv("LOG_LEVEL", "info"),
 	}
 
