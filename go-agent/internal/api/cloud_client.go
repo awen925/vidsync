@@ -14,6 +14,7 @@ type CloudClient struct {
 	baseURL string
 	apiKey  string
 	client  *http.Client
+	logger  interface{} // For compatibility, can be nil
 }
 
 // NewCloudClient creates a new Cloud API client
@@ -128,6 +129,13 @@ func (cc *CloudClient) PostWithAuth(endpoint string, payload interface{}, bearer
 	// Set Bearer token - will not be overwritten by doRequest since we check if already set
 	req.Header.Set("Authorization", "Bearer "+bearerToken)
 
+	// Log the payload being sent
+	if cc.logger != nil {
+		fmt.Printf("[CloudClient] POST %s\n", endpoint)
+		fmt.Printf("[CloudClient] Payload: %+v\n", payload)
+		fmt.Printf("[CloudClient] Authorization: Bearer %s...\n", bearerToken[:min(len(bearerToken), 20)])
+	}
+
 	return cc.doRequest(req)
 }
 
@@ -146,8 +154,22 @@ func (cc *CloudClient) PutWithAuth(endpoint string, payload interface{}, bearerT
 	// Set Bearer token - will not be overwritten by doRequest since we check if already set
 	req.Header.Set("Authorization", "Bearer "+bearerToken)
 
+	// Log the payload being sent
+	if cc.logger != nil {
+		fmt.Printf("[CloudClient] PUT %s\n", endpoint)
+		fmt.Printf("[CloudClient] Payload: %+v\n", payload)
+	}
+
 	_, err = cc.doRequest(req)
 	return err
+}
+
+// min returns the minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func (cc *CloudClient) get(endpoint string) (map[string]interface{}, error) {
@@ -169,8 +191,16 @@ func (cc *CloudClient) doRequest(req *http.Request) (map[string]interface{}, err
 		req.Header.Set("Content-Type", "application/json")
 	}
 
+	if cc.logger != nil {
+		fmt.Printf("[CloudClient] Request: %s %s\n", req.Method, req.URL.String())
+		fmt.Printf("[CloudClient] Headers: %+v\n", req.Header)
+	}
+
 	resp, err := cc.client.Do(req)
 	if err != nil {
+		if cc.logger != nil {
+			fmt.Printf("[CloudClient] Request error: %v\n", err)
+		}
 		return nil, err
 	}
 	defer resp.Body.Close()
@@ -178,6 +208,11 @@ func (cc *CloudClient) doRequest(req *http.Request) (map[string]interface{}, err
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
+	}
+
+	if cc.logger != nil {
+		fmt.Printf("[CloudClient] Response status: %d\n", resp.StatusCode)
+		fmt.Printf("[CloudClient] Response body: %s\n", string(body))
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {

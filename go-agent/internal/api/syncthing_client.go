@@ -25,22 +25,21 @@ func NewSyncthingClient(baseURL, apiKey string) *SyncthingClient {
 		apiKey:  apiKey,
 		client: &http.Client{
 			Timeout: 10 * time.Second,
+			Jar:     nil, // Explicitly disable cookie jar to prevent automatic cookie sending
 		},
 	}
 }
 
 // AddFolder adds a folder to Syncthing
 func (sc *SyncthingClient) AddFolder(folderID, folderLabel, folderPath string) error {
+	// Syncthing API only requires id and path for folder creation
+	// Other fields like label, type, etc. can be added/modified separately if needed
 	payload := map[string]interface{}{
-		"id":              folderID,
-		"label":           folderLabel,
-		"path":            folderPath,
-		"type":            "sendreceive",
-		"devices":         []map[string]string{},
-		"autoNormalize":   true,
-		"rescanIntervalS": 3600,
+		"id":   folderID,
+		"path": folderPath,
 	}
 
+	fmt.Printf("[SyncthingClient] AddFolder payload: id=%s, path=%s\n", folderID, folderPath)
 	return sc.postConfig("folders", payload)
 }
 
@@ -248,7 +247,11 @@ func (sc *SyncthingClient) postConfig(endpoint string, payload interface{}) erro
 		return err
 	}
 
-	req, err := http.NewRequest("POST", sc.baseURL+"/rest/config/"+endpoint, bytes.NewBuffer(data))
+	url := sc.baseURL + "/rest/config/" + endpoint
+	fmt.Printf("[SyncthingClient] Calling: POST %s\n", url)
+	fmt.Printf("[SyncthingClient] Payload: %s\n", string(data))
+
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(data))
 	if err != nil {
 		return err
 	}
@@ -280,7 +283,7 @@ func (sc *SyncthingClient) get(endpoint string) (map[string]interface{}, error) 
 		return nil, err
 	}
 
-	resp, err := sc.doReq(req)
+	resp, err := sc.doReq(req, false)
 	if err != nil {
 		return nil, err
 	}
@@ -294,26 +297,42 @@ func (sc *SyncthingClient) get(endpoint string) (map[string]interface{}, error) 
 }
 
 func (sc *SyncthingClient) doRequest(req *http.Request) error {
-	_, err := sc.doReq(req)
+	_, err := sc.doReq(req, false)
 	return err
 }
 
-func (sc *SyncthingClient) doReq(req *http.Request) ([]byte, error) {
+func (sc *SyncthingClient) doReq(req *http.Request, retried bool) ([]byte, error) {
 	req.Header.Set("X-API-Key", sc.apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
+	// Explicitly remove any cookies to prevent interference with Syncthing API
+	req.Header.Del("Cookie")
+
+	// Log the API key being used for verification
+	apiKeyPreview := sc.apiKey
+	if len(sc.apiKey) > 20 {
+		apiKeyPreview = sc.apiKey[:20] + "..."
+	}
+	fmt.Printf("[SyncthingClient] %s %s - Using X-API-Key: %s\n", req.Method, req.URL.Path, apiKeyPreview)
+	fmt.Printf("[SyncthingClient] Headers: X-API-Key=%s, Content-Type=%s, Cookie=%v\n", apiKeyPreview, "application/json", req.Header.Get("Cookie"))
+
 	resp, err := sc.client.Do(req)
 	if err != nil {
+		fmt.Printf("[SyncthingClient] Request error: %v\n", err)
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		fmt.Printf("[SyncthingClient] Error reading response body: %v\n", err)
 		return nil, err
 	}
 
+	fmt.Printf("[SyncthingClient] Response status: %d, body length: %d\n", resp.StatusCode, len(body))
+
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		fmt.Printf("[SyncthingClient] API error: %d - %s\n", resp.StatusCode, string(body))
 		return nil, fmt.Errorf("syncthing API error: %d - %s", resp.StatusCode, string(body))
 	}
 

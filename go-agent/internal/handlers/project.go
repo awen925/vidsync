@@ -22,6 +22,14 @@ func NewProjectHandler(service *services.ProjectService, logger *util.Logger) *P
 	}
 }
 
+// min returns the minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // CreateProject creates a new project with Syncthing folder
 func (h *ProjectHandler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -32,24 +40,37 @@ func (h *ProjectHandler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		OwnerID   string `json:"ownerId"`
 	}
 
+	h.logger.Info("[CreateProject] Handler received request")
+
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.logger.Error("[CreateProject] Failed to decode request body: %v", err)
 		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
 		return
 	}
 
-	// Extract JWT token from cloud-authorization header (sent by Electron via GoAgentClient)
+	h.logger.Info("[CreateProject] Request decoded: projectId=%s, name=%s, localPath=%s, deviceId=%s, ownerId=%s",
+		req.ProjectID, req.Name, req.LocalPath, req.DeviceID, req.OwnerID)
+
+	// Extract JWT token from Authorization header (sent by Electron via GoAgentClient)
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
+		h.logger.Error("[CreateProject] Missing Authorization header")
 		http.Error(w, `{"error":"missing cloud authorization header"}`, http.StatusUnauthorized)
 		return
 	}
+
+	h.logger.Debug("[CreateProject] Authorization header present, extracting token")
 
 	// Expected format: "Bearer <token>"
 	accessToken := authHeader
 	if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
 		accessToken = authHeader[7:]
+		h.logger.Debug("[CreateProject] Token extracted from Bearer format")
+	} else {
+		h.logger.Warn("[CreateProject] Authorization header not in Bearer format: %s", authHeader[:min(20, len(authHeader))])
 	}
 
+	h.logger.Info("[CreateProject] Calling service.CreateProject")
 	result, err := h.service.CreateProject(r.Context(), &services.CreateProjectRequest{
 		ProjectID:   req.ProjectID,
 		Name:        req.Name,
@@ -60,10 +81,12 @@ func (h *ProjectHandler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if err != nil {
-		h.logger.Error("Failed to create project: %v", err)
+		h.logger.Error("[CreateProject] service.CreateProject failed: %v", err)
 		http.Error(w, `{"error":"failed to create project"}`, http.StatusInternalServerError)
 		return
 	}
+
+	h.logger.Info("[CreateProject] Success, returning response")
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
@@ -83,24 +106,37 @@ func (h *ProjectHandler) CreateProjectWithSnapshot(w http.ResponseWriter, r *htt
 		OwnerID   string `json:"ownerId"`
 	}
 
+	h.logger.Info("[CreateProjectWithSnapshot] Handler received request")
+
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.logger.Error("[CreateProjectWithSnapshot] Failed to decode request body: %v", err)
 		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
 		return
 	}
 
-	// Extract JWT token from cloud-authorization header (sent by Electron via GoAgentClient)
+	h.logger.Info("[CreateProjectWithSnapshot] Request decoded: projectId=%s, name=%s, localPath=%s, deviceId=%s, ownerId=%s",
+		req.ProjectID, req.Name, req.LocalPath, req.DeviceID, req.OwnerID)
+
+	// Extract JWT token from Authorization header (sent by Electron via GoAgentClient)
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
+		h.logger.Error("[CreateProjectWithSnapshot] Missing Authorization header")
 		http.Error(w, `{"error":"missing cloud authorization header"}`, http.StatusUnauthorized)
 		return
 	}
+
+	h.logger.Debug("[CreateProjectWithSnapshot] Authorization header present, extracting token")
 
 	// Expected format: "Bearer <token>"
 	accessToken := authHeader
 	if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
 		accessToken = authHeader[7:]
+		h.logger.Debug("[CreateProjectWithSnapshot] Token extracted from Bearer format")
+	} else {
+		h.logger.Warn("[CreateProjectWithSnapshot] Authorization header not in Bearer format: %s", authHeader[:min(20, len(authHeader))])
 	}
 
+	h.logger.Info("[CreateProjectWithSnapshot] Calling service.CreateProjectWithSnapshot")
 	result, err := h.service.CreateProjectWithSnapshot(r.Context(), &services.CreateProjectRequest{
 		ProjectID:   req.ProjectID,
 		Name:        req.Name,
@@ -111,10 +147,12 @@ func (h *ProjectHandler) CreateProjectWithSnapshot(w http.ResponseWriter, r *htt
 	})
 
 	if err != nil {
-		h.logger.Error("Failed to create project: %v", err)
+		h.logger.Error("[CreateProjectWithSnapshot] service.CreateProjectWithSnapshot failed: %v", err)
 		http.Error(w, `{"error":"failed to create project"}`, http.StatusInternalServerError)
 		return
 	}
+
+	h.logger.Info("[CreateProjectWithSnapshot] Success, returning response")
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)

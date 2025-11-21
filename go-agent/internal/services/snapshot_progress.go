@@ -95,12 +95,32 @@ func (spt *SnapshotProgressTracker) UpdateProgress(projectID string, step string
 	spt.mu.Unlock()
 
 	// Create and send event
+	// Calculate progress with better granularity
+	// Step 1: 10%, Step 2: 20%, Step 3: 50%, Step 4: 75%, Step 5: 95%, Step 6: 100%
+	var progressPct int
+	switch stepNum {
+	case 1:
+		progressPct = 10
+	case 2:
+		progressPct = 20
+	case 3:
+		progressPct = 50
+	case 4:
+		progressPct = 75
+	case 5:
+		progressPct = 95
+	case 6:
+		progressPct = 100
+	default:
+		progressPct = 0
+	}
+
 	event := SnapshotProgressEvent{
 		ProjectID:  projectID,
 		Step:       step,
 		StepNumber: stepNum,
 		TotalSteps: 6,
-		Progress:   (stepNum * 100) / 6, // 0-100
+		Progress:   progressPct,
 		FileCount:  fileCount,
 		TotalSize:  totalSize,
 		Message:    message,

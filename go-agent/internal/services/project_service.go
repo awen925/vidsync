@@ -46,38 +46,45 @@ type CreateProjectResponse struct {
 
 // CreateProject creates a new project with Syncthing folder
 func (ps *ProjectService) CreateProject(ctx context.Context, req *CreateProjectRequest) (*CreateProjectResponse, error) {
-	ps.logger.Info("[ProjectService] Creating project: %s", req.ProjectID)
+	ps.logger.Info("[ProjectService] CreateProject started for: %s", req.ProjectID)
+	ps.logger.Debug("[ProjectService] CreateProject request: projectId=%s, name=%s, localPath=%s, deviceId=%s, ownerId=%s",
+		req.ProjectID, req.Name, req.LocalPath, req.DeviceID, req.OwnerID)
 
 	// Create folder in Syncthing
+	ps.logger.Info("[ProjectService] STEP 1: Creating Syncthing folder for project: %s", req.ProjectID)
 	err := ps.syncClient.AddFolder(req.ProjectID, req.Name, req.LocalPath)
 	if err != nil {
-		ps.logger.Error("[ProjectService] Failed to create Syncthing folder: %v", err)
+		ps.logger.Error("[ProjectService] STEP 1 FAILED: Failed to create Syncthing folder: %v", err)
 		return &CreateProjectResponse{OK: false, Error: err.Error()}, err
 	}
 
-	ps.logger.Info("[ProjectService] Syncthing folder created, notifying cloud...")
+	ps.logger.Info("[ProjectService] STEP 1 SUCCESS: Syncthing folder created")
 
 	// Notify cloud about project creation (non-blocking)
+	ps.logger.Info("[ProjectService] STEP 2: Notifying cloud about project creation")
+	payload := map[string]interface{}{
+		"projectId": req.ProjectID,
+		"name":      req.Name,
+		"localPath": req.LocalPath,
+		"deviceId":  req.DeviceID,
+		"ownerId":   req.OwnerID,
+		"status":    "active",
+	}
+	ps.logger.Debug("[ProjectService] STEP 2: Cloud API payload: %+v", payload)
+
 	_, err = ps.cloudClient.PostWithAuth(
 		"/projects",
-		map[string]interface{}{
-			"projectId": req.ProjectID,
-			"name":      req.Name,
-			"localPath": req.LocalPath,
-			"deviceId":  req.DeviceID,
-			"ownerId":   req.OwnerID,
-			"status":    "active",
-		},
+		payload,
 		req.AccessToken,
 	)
 	if err != nil {
-		ps.logger.Warn("[ProjectService] Failed to notify cloud about project creation: %v", err)
+		ps.logger.Error("[ProjectService] STEP 2 FAILED: Failed to notify cloud about project creation: %v", err)
 		// Don't fail - local folder was created, cloud update is secondary
 	} else {
-		ps.logger.Info("[ProjectService] Cloud notified about project creation")
+		ps.logger.Info("[ProjectService] STEP 2 SUCCESS: Cloud notified about project creation")
 	}
 
-	ps.logger.Info("[ProjectService] Project created successfully: %s", req.ProjectID)
+	ps.logger.Info("[ProjectService] CreateProject completed successfully: %s", req.ProjectID)
 	return &CreateProjectResponse{OK: true, ProjectID: req.ProjectID}, nil
 }
 
@@ -90,25 +97,33 @@ func (ps *ProjectService) CreateProject(ctx context.Context, req *CreateProjectR
 // 6. Upload snapshot to Supabase storage
 // This method is used when creating a project with an existing local path
 func (ps *ProjectService) CreateProjectWithSnapshot(ctx context.Context, req *CreateProjectRequest) (*CreateProjectResponse, error) {
-	ps.logger.Info("[ProjectService] Creating project WITH snapshot generation: %s", req.Name)
+	ps.logger.Info("[ProjectService] CreateProjectWithSnapshot started for: %s", req.Name)
+	ps.logger.Debug("[ProjectService] CreateProjectWithSnapshot request: projectId=%s, name=%s, localPath=%s, deviceId=%s, ownerId=%s",
+		req.ProjectID, req.Name, req.LocalPath, req.DeviceID, req.OwnerID)
 
 	// STEP 1: Create project in cloud database first
 	ps.logger.Info("[ProjectService] STEP 1: Creating project in cloud database...")
+	payload := map[string]interface{}{
+		"name":       req.Name,
+		"local_path": req.LocalPath,
+		"deviceId":   req.DeviceID,
+		"ownerId":    req.OwnerID,
+		"status":     "active",
+	}
+	ps.logger.Debug("[ProjectService] STEP 1: Cloud API payload: %+v", payload)
+
 	cloudResponse, err := ps.cloudClient.PostWithAuth(
 		"/projects",
-		map[string]interface{}{
-			"name":      req.Name,
-			"localPath": req.LocalPath,
-			"deviceId":  req.DeviceID,
-			"ownerId":   req.OwnerID,
-			"status":    "active",
-		},
+		payload,
 		req.AccessToken,
 	)
 	if err != nil {
-		ps.logger.Error("[ProjectService] Failed to create project in cloud: %v", err)
+		ps.logger.Error("[ProjectService] STEP 1 FAILED: Failed to create project in cloud: %v", err)
 		return &CreateProjectResponse{OK: false, Error: err.Error()}, err
 	}
+
+	ps.logger.Info("[ProjectService] STEP 1 SUCCESS: Project created in cloud")
+	ps.logger.Debug("[ProjectService] STEP 1: Cloud response: %+v", cloudResponse)
 
 	// Extract projectId from cloud response
 	projectID := req.ProjectID
@@ -119,12 +134,13 @@ func (ps *ProjectService) CreateProjectWithSnapshot(ctx context.Context, req *Cr
 
 	// STEP 2: Create Syncthing folder
 	ps.logger.Info("[ProjectService] STEP 2: Creating Syncthing folder...")
+	ps.logger.Debug("[ProjectService] STEP 2: Adding folder to Syncthing: id=%s, label=%s, path=%s", projectID, req.Name, req.LocalPath)
 	err = ps.syncClient.AddFolder(projectID, req.Name, req.LocalPath)
 	if err != nil {
-		ps.logger.Error("[ProjectService] Failed to create Syncthing folder: %v", err)
+		ps.logger.Error("[ProjectService] STEP 2 FAILED: Failed to create Syncthing folder: %v", err)
 		return &CreateProjectResponse{OK: false, Error: err.Error()}, err
 	}
-	ps.logger.Info("[ProjectService] Syncthing folder created: %s", projectID)
+	ps.logger.Info("[ProjectService] STEP 2 SUCCESS: Syncthing folder created: %s", projectID)
 
 	// STEP 3: Asynchronously generate snapshot (don't block project creation)
 	// Return success immediately, snapshot generation happens in background
@@ -135,25 +151,26 @@ func (ps *ProjectService) CreateProjectWithSnapshot(ctx context.Context, req *Cr
 		ps.logger.Info("[ProjectService] STEP 3: Starting background snapshot generation...")
 
 		// Wait for folder scan to complete
+		ps.logger.Info("[ProjectService] STEP 3a: Waiting for Syncthing folder scan to complete...")
 		err := ps.fileService.WaitForScanCompletion(ctx, projectID, 120)
 		if err != nil {
-			ps.logger.Warn("[ProjectService] Failed to wait for scan: %v", err)
+			ps.logger.Error("[ProjectService] STEP 3a FAILED: Failed to wait for scan: %v", err)
 			return
 		}
+		ps.logger.Info("[ProjectService] STEP 3a SUCCESS: Folder scan completed")
 
 		// Generate snapshot
-		ps.logger.Info("[ProjectService] STEP 4: Generating file snapshot...")
+		ps.logger.Info("[ProjectService] STEP 3b: Generating file snapshot...")
 		_, err = ps.fileService.GenerateSnapshot(ctx, projectID, req.AccessToken)
 		if err != nil {
-			ps.logger.Warn("[ProjectService] Failed to generate snapshot: %v", err)
+			ps.logger.Error("[ProjectService] STEP 3b FAILED: Failed to generate snapshot: %v", err)
 			// Don't fail - snapshot is optional
 			return
 		}
-
-		ps.logger.Info("[ProjectService] Snapshot generation completed for: %s", projectID)
+		ps.logger.Info("[ProjectService] STEP 3b SUCCESS: File snapshot generated and uploaded")
 	}()
 
-	ps.logger.Info("[ProjectService] Project created successfully (snapshot generation in progress): %s", projectID)
+	ps.logger.Info("[ProjectService] CreateProjectWithSnapshot completed successfully: %s", projectID)
 	return &CreateProjectResponse{OK: true, ProjectID: projectID}, nil
 }
 

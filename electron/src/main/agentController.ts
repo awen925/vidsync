@@ -5,6 +5,7 @@ import { platform } from 'os';
 import fs from 'fs';
 import { app } from 'electron';
 import { createServiceLogger, isDevelopment } from './logger';
+import SyncthingManager from './syncthingManager';
 
 export class AgentController {
   public events = new EventEmitter();
@@ -89,23 +90,43 @@ export class AgentController {
         this.isRunning = false;
         resolve(false);
       } else {
-        const p = spawn(c, [], { detached: false, stdio: ['ignore', 'pipe', 'pipe'] });
+        // Get Syncthing API key from config and pass via environment
+        const syncthingManager = new SyncthingManager();
+        const syncthingConfig = syncthingManager['findSystemSyncthingConfig']?.() || {};
+        const apiKey = syncthingConfig.apiKey || '';
+
+        // Prepare environment with Syncthing API key
+        const env = { ...process.env };
+        if (apiKey) {
+          env.SYNCTHING_API_KEY = apiKey;
+          if (isDevelopment()) {
+            console.log(`[Agent] Passing Syncthing API key to Go Agent`);
+          }
+        }
+
+        const p = spawn(c, [], { detached: false, stdio: ['ignore', 'pipe', 'pipe'], env });
         p.on('error', () => {
           this.isRunning = false;
           resolve(false);
         });
         p.stdout?.on('data', (d) => {
-          const s = d.toString();
-          if (isDevelopment()) console.log(`[Agent] ${d.toString()}`);
-          this.events.emit('agent:stdout', s);
+          const s = d.toString().trim();
+          if (s) {
+            // Always log to console for debugging
+            console.log(`[Agent] ${s}`);
+            this.events.emit('agent:stdout', s);
+          }
         });
         p.stderr?.on('data', (d) => {
-          const s = d.toString();
-          if (isDevelopment()) console.log(`[Agent] ${d.toString()}`);
-          this.events.emit('agent:stderr', s);
+          const s = d.toString().trim();
+          if (s) {
+            // Always log to console for debugging
+            console.error(`[Agent] ${s}`);
+            this.events.emit('agent:stderr', s);
+          }
         });
         p.on('exit', (code, signal) => {
-          if (isDevelopment()) console.log(`[Agent] exited code=${code} signal=${signal}`);
+          console.log(`[Agent] exited code=${code} signal=${signal}`);
           this.process = null;
           this.isRunning = false;
         });

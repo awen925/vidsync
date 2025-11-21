@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 
 	"github.com/joho/godotenv"
 )
@@ -64,6 +65,7 @@ func Load() (*Config, error) {
 		APIPort:                29999,
 		SyncthingPort:          8384,
 		SyncthingBinary:        "syncthing",
+		SyncthingAPIKey:        getSyncthingAPIKey(dataDir),
 		NebulaEnabled:          true,
 		NebulaBinary:           "nebula",
 		CloudURL:               getEnv("CLOUD_URL", "http://localhost:5000/api"),
@@ -83,4 +85,35 @@ func getEnv(key, defaultVal string) string {
 		return val
 	}
 	return defaultVal
+}
+
+// getSyncthingAPIKey reads the API key from environment or Syncthing's config file
+func getSyncthingAPIKey(dataDir string) string {
+	// First, try to get from environment variable (passed by Electron)
+	if apiKey := os.Getenv("SYNCTHING_API_KEY"); apiKey != "" {
+		return apiKey
+	}
+
+	// Try to read from Syncthing config file
+	configPath := filepath.Join(os.ExpandEnv("$HOME"), ".config", "vidsync", "syncthing", "shared", "config.xml")
+
+	// Also try alternative paths
+	alternativePaths := []string{
+		filepath.Join(os.ExpandEnv("$HOME"), ".config", "Syncthing", "config.xml"),
+		filepath.Join(dataDir, "syncthing", "config.xml"),
+	}
+
+	allPaths := append([]string{configPath}, alternativePaths...)
+
+	for _, path := range allPaths {
+		if content, err := os.ReadFile(path); err == nil {
+			// Extract API key from XML: <apikey>...</apikey>
+			re := regexp.MustCompile(`<apikey>([^<]+)<\/apikey>`)
+			if matches := re.FindSubmatch(content); len(matches) > 1 {
+				return string(matches[1])
+			}
+		}
+	}
+
+	return ""
 }
