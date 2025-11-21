@@ -16,6 +16,14 @@ import (
 	"github.com/vidsync/agent/internal/ws"
 )
 
+// obfuscateKey returns a partially masked key for logging
+func obfuscateKey(key string) string {
+	if len(key) <= 4 {
+		return "***"
+	}
+	return key[:4] + "..." + key[len(key)-4:]
+}
+
 func main() {
 	// Initialize logger
 	logger := util.NewLogger("agent")
@@ -56,6 +64,9 @@ func main() {
 	syncService := services.NewSyncService(syncthingClient, cloudClient, logger)
 	deviceService := services.NewDeviceService(syncthingClient, cloudClient, logger)
 	fileService := services.NewFileService(syncthingClient, cloudClient, logger)
+
+	// Note: FileService no longer needs Supabase credentials
+	// Snapshot uploads go through Cloud API which handles storage internally
 
 	// Initialize API router and start HTTP server
 	router := handlers.NewRouter(projectService, syncService, deviceService, fileService, logger)

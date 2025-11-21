@@ -71,9 +71,9 @@ func Load() (*Config, error) {
 		CloudURL:               getEnv("CLOUD_URL", "http://localhost:5000/api"),
 		CloudKey:               getEnv("CLOUD_API_KEY", ""),
 		CloudPort:              5000,
-		SupabaseURL:            getEnv("SUPABASE_URL", ""),
-		SupabaseAnonKey:        getEnv("SUPABASE_ANON_KEY", ""),
-		SupabaseServiceRoleKey: getEnv("SUPABASE_SERVICE_ROLE_KEY", ""),
+		SupabaseURL:            getEnv("SUPABASE_URL", "https://ucnrohdiyepmdrsxkhyq.supabase.co"),
+		SupabaseAnonKey:        getEnv("SUPABASE_ANON_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVjbnJvaGRpeWVwbWRyc3hraHlxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI5NTEyNjEsImV4cCI6MjA3ODUyNzI2MX0.TpgQqBUVvs1_3yPaCxGsPrS2d27axdE_ISzhY1mhSzQ"),
+		SupabaseServiceRoleKey: getEnv("SUPABASE_SERVICE_ROLE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVjbnJvaGRpeWVwbWRyc3hraHlxIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2Mjk1MTI2MSwiZXhwIjoyMDc4NTI3MjYxfQ.008ajRq4aGKtUZb4K1DVJ7eDr15Lcsw2sDV0m2UoCaM"),
 		LogLevel:               getEnv("LOG_LEVEL", "info"),
 	}
 

@@ -80,7 +80,19 @@ Create `go-agent/.env`:
 ```env
 CLOUD_URL=http://localhost:3000/api
 LOG_LEVEL=info
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=your-anon-key-here
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key-here
 ```
+
+**Environment Variables Explained:**
+- `CLOUD_URL`: URL to the Cloud API (Vidsync backend)
+- `LOG_LEVEL`: Logging level (debug, info, warn, error)
+- `SUPABASE_URL`: Your Supabase project URL (required for snapshot storage)
+- `SUPABASE_ANON_KEY`: Supabase anon key for public storage access (required for snapshot storage)
+- `SUPABASE_SERVICE_ROLE_KEY`: Supabase service role key for admin operations (optional)
+
+**📚 Snapshot Setup**: See [SNAPSHOT_SETUP_GUIDE.md](./SNAPSHOT_SETUP_GUIDE.md) for detailed Supabase configuration instructions
 
 Create `~/.vidsync/nebula.yml` (if using Nebula):
 ```yaml
@@ -385,6 +397,40 @@ sudo ufw allow 29999/tcp
 # Verify agent is running
 curl http://127.0.0.1:29999/v1/status
 ```
+
+### Supabase Credentials Not Configured
+If you see error: "Supabase credentials not configured"
+
+1. Verify `.env` file exists in `go-agent/` directory:
+   ```bash
+   cat go-agent/.env
+   ```
+
+2. Check that `SUPABASE_URL` and `SUPABASE_ANON_KEY` are set:
+   ```bash
+   grep SUPABASE go-agent/.env
+   ```
+
+3. Ensure values are correct (copy from Supabase dashboard):
+   - Go to https://app.supabase.com/project/[your-project-id]/settings/api
+   - Copy "Project URL" → `SUPABASE_URL`
+   - Copy "anon public" key → `SUPABASE_ANON_KEY`
+
+4. Restart the agent:
+   ```bash
+   pkill vidsync-agent
+   sleep 2
+   ./go-agent/vidsync-agent
+   ```
+
+5. Check logs for: "FileService configured with Supabase storage"
+
+### Snapshot Upload Fails with "Request Entity Too Large"
+This indicates Supabase credentials are not configured. The agent automatically:
+- Compresses snapshots with gzip (reduces size 90%)
+- Uploads directly to Supabase Storage (bypasses API size limits)
+
+Ensure `SUPABASE_URL` and `SUPABASE_ANON_KEY` are set in `.env`.
 
 ## 📚 Resources
 

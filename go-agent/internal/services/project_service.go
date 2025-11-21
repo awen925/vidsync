@@ -125,12 +125,22 @@ func (ps *ProjectService) CreateProjectWithSnapshot(ctx context.Context, req *Cr
 	ps.logger.Info("[ProjectService] STEP 1 SUCCESS: Project created in cloud")
 	ps.logger.Debug("[ProjectService] STEP 1: Cloud response: %+v", cloudResponse)
 
-	// Extract projectId from cloud response
+	// Extract projectId from cloud response - Cloud API returns response with nested "project" object
 	projectID := req.ProjectID
-	if cloudProjectID, ok := cloudResponse["projectId"].(string); ok && cloudProjectID != "" {
+
+	// Try to extract from nested "project" object first (new format)
+	if projectObj, ok := cloudResponse["project"].(map[string]interface{}); ok {
+		if cloudProjectID, ok := projectObj["id"].(string); ok && cloudProjectID != "" {
+			projectID = cloudProjectID
+			ps.logger.Info("[ProjectService] Cloud assigned projectId (from project.id): %s", projectID)
+		}
+	} else if cloudProjectID, ok := cloudResponse["projectId"].(string); ok && cloudProjectID != "" {
+		// Fallback to flat projectId (old format)
 		projectID = cloudProjectID
-		ps.logger.Info("[ProjectService] Cloud assigned projectId: %s", projectID)
+		ps.logger.Info("[ProjectService] Cloud assigned projectId (from projectId): %s", projectID)
 	}
+
+	ps.logger.Info("[ProjectService] Using projectId for subsequent steps: %s", projectID)
 
 	// STEP 2: Create Syncthing folder
 	ps.logger.Info("[ProjectService] STEP 2: Creating Syncthing folder...")
@@ -291,21 +301,37 @@ func (ps *ProjectService) RemoveDevice(ctx context.Context, projectID, deviceID,
 
 // GetProjectStatus gets project snapshot and sync status
 // Used for polling during snapshot generation
+// Only polls folder status if snapshot generation is still in progress (step != "completed" or "failed")
 func (ps *ProjectService) GetProjectStatus(ctx context.Context, projectID string) (map[string]interface{}, error) {
 	ps.logger.Debug("[ProjectService] Getting project status: %s", projectID)
 
-	// Get Syncthing folder status
-	status, err := ps.syncClient.GetFolderStatus(projectID)
-	if err != nil {
-		ps.logger.Error("[ProjectService] Failed to get folder status: %v", err)
-		return nil, err
+	// Check snapshot generation progress
+	progressState := ps.fileService.GetProgressTracker().GetProgress(projectID)
+
+	// IMPORTANT: Stop polling entirely after snapshot generation completes or fails
+	// This prevents continuous polling and allows frontend to stop polling
+	if progressState != nil && (progressState.Step == "completed" || progressState.Step == "failed") {
+		ps.logger.Debug("[ProjectService] Snapshot generation %s, returning final status", progressState.Step)
+		return map[string]interface{}{
+			"projectId":   projectID,
+			"progress":    progressState,
+			"finalStatus": true, // Signal to frontend that polling should stop
+		}, nil
 	}
 
-	// Return current project status
-	// In a real implementation, this could check a database or cache for snapshot generation status
-	// For now, just return Syncthing status
+	// Poll folder status during snapshot generation
+	var status map[string]interface{}
+	var err error
+	status, err = ps.syncClient.GetFolderStatus(projectID)
+	if err != nil {
+		ps.logger.Warn("[ProjectService] Failed to get folder status (non-blocking): %v", err)
+		status = map[string]interface{}{}
+	}
+
+	// Return current project status with progress info
 	return map[string]interface{}{
 		"projectId": projectID,
 		"status":    status,
+		"progress":  progressState,
 	}, nil
 }

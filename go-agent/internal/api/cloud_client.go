@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"time"
 )
@@ -106,6 +107,9 @@ func (cc *CloudClient) post(endpoint string, payload interface{}) (map[string]in
 		return nil, err
 	}
 
+	fmt.Printf("[CloudClient] POST %s\n", endpoint)
+	fmt.Printf("[CloudClient] Payload: %s\n", string(data))
+
 	req, err := http.NewRequest("POST", cc.baseURL+endpoint, bytes.NewBuffer(data))
 	if err != nil {
 		return nil, err
@@ -121,6 +125,14 @@ func (cc *CloudClient) PostWithAuth(endpoint string, payload interface{}, bearer
 		return nil, err
 	}
 
+	fmt.Printf("[CloudClient] POST %s\n", endpoint)
+	fmt.Printf("[CloudClient] Payload: %s\n", string(data))
+	tokenPreview := bearerToken
+	if len(bearerToken) > 20 {
+		tokenPreview = bearerToken[:20] + "..."
+	}
+	fmt.Printf("[CloudClient] Authorization: Bearer %s\n", tokenPreview)
+
 	req, err := http.NewRequest("POST", cc.baseURL+endpoint, bytes.NewBuffer(data))
 	if err != nil {
 		return nil, err
@@ -129,12 +141,61 @@ func (cc *CloudClient) PostWithAuth(endpoint string, payload interface{}, bearer
 	// Set Bearer token - will not be overwritten by doRequest since we check if already set
 	req.Header.Set("Authorization", "Bearer "+bearerToken)
 
-	// Log the payload being sent
-	if cc.logger != nil {
-		fmt.Printf("[CloudClient] POST %s\n", endpoint)
-		fmt.Printf("[CloudClient] Payload: %+v\n", payload)
-		fmt.Printf("[CloudClient] Authorization: Bearer %s...\n", bearerToken[:min(len(bearerToken), 20)])
+	return cc.doRequest(req)
+}
+
+// PostMultipartWithAuth sends a multipart form request with Bearer token auth
+// Used for file uploads like snapshots
+// fileFieldName is the form field name for the file (usually "file")
+// fileData is the binary file data
+// formFields are additional form fields (map of field name to value)
+func (cc *CloudClient) PostMultipartWithAuth(endpoint string, fileFieldName string, fileData []byte, formFields map[string]string, bearerToken string) (map[string]interface{}, error) {
+	// Create multipart form
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	// Add file field using CreateFormFile (not CreateFormField)
+	// This properly sets the Content-Disposition header for file uploads
+	part, err := writer.CreateFormFile(fileFieldName, "snapshot.json.gz")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create file form field: %w", err)
 	}
+
+	if _, err := part.Write(fileData); err != nil {
+		return nil, fmt.Errorf("failed to write file data: %w", err)
+	}
+
+	// Add additional form fields
+	for fieldName, fieldValue := range formFields {
+		if err := writer.WriteField(fieldName, fieldValue); err != nil {
+			return nil, fmt.Errorf("failed to write form field %s: %w", fieldName, err)
+		}
+	}
+
+	// Close multipart writer to finalize the body
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("failed to close multipart writer: %w", err)
+	}
+
+	fmt.Printf("[CloudClient] POST %s (multipart)\n", endpoint)
+	fmt.Printf("[CloudClient] File field: %s (%d bytes)\n", fileFieldName, len(fileData))
+	fmt.Printf("[CloudClient] Form fields: %v\n", formFields)
+	tokenPreview := bearerToken
+	if len(bearerToken) > 20 {
+		tokenPreview = bearerToken[:20] + "..."
+	}
+	fmt.Printf("[CloudClient] Authorization: Bearer %s\n", tokenPreview)
+
+	req, err := http.NewRequest("POST", cc.baseURL+endpoint, body)
+	if err != nil {
+		return nil, err
+	}
+
+	// Set Bearer token
+	req.Header.Set("Authorization", "Bearer "+bearerToken)
+
+	// Set Content-Type to multipart/form-data with boundary
+	req.Header.Set("Content-Type", writer.FormDataContentType())
 
 	return cc.doRequest(req)
 }
@@ -146,6 +207,14 @@ func (cc *CloudClient) PutWithAuth(endpoint string, payload interface{}, bearerT
 		return err
 	}
 
+	fmt.Printf("[CloudClient] PUT %s\n", endpoint)
+	fmt.Printf("[CloudClient] Payload: %s\n", string(data))
+	tokenPreview := bearerToken
+	if len(bearerToken) > 20 {
+		tokenPreview = bearerToken[:20] + "..."
+	}
+	fmt.Printf("[CloudClient] Authorization: Bearer %s\n", tokenPreview)
+
 	req, err := http.NewRequest("PUT", cc.baseURL+endpoint, bytes.NewBuffer(data))
 	if err != nil {
 		return err
@@ -153,12 +222,6 @@ func (cc *CloudClient) PutWithAuth(endpoint string, payload interface{}, bearerT
 
 	// Set Bearer token - will not be overwritten by doRequest since we check if already set
 	req.Header.Set("Authorization", "Bearer "+bearerToken)
-
-	// Log the payload being sent
-	if cc.logger != nil {
-		fmt.Printf("[CloudClient] PUT %s\n", endpoint)
-		fmt.Printf("[CloudClient] Payload: %+v\n", payload)
-	}
 
 	_, err = cc.doRequest(req)
 	return err
@@ -173,6 +236,7 @@ func min(a, b int) int {
 }
 
 func (cc *CloudClient) get(endpoint string) (map[string]interface{}, error) {
+	fmt.Printf("[CloudClient] GET %s\n", endpoint)
 	req, err := http.NewRequest("GET", cc.baseURL+endpoint, nil)
 	if err != nil {
 		return nil, err
@@ -191,33 +255,30 @@ func (cc *CloudClient) doRequest(req *http.Request) (map[string]interface{}, err
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	if cc.logger != nil {
-		fmt.Printf("[CloudClient] Request: %s %s\n", req.Method, req.URL.String())
-		fmt.Printf("[CloudClient] Headers: %+v\n", req.Header)
-	}
+	fmt.Printf("[CloudClient] Request: %s %s\n", req.Method, req.URL.String())
 
 	resp, err := cc.client.Do(req)
 	if err != nil {
-		if cc.logger != nil {
-			fmt.Printf("[CloudClient] Request error: %v\n", err)
-		}
+		fmt.Printf("[CloudClient] ✗ Request error: %v\n", err)
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		fmt.Printf("[CloudClient] ✗ Error reading response body: %v\n", err)
 		return nil, err
 	}
 
-	if cc.logger != nil {
-		fmt.Printf("[CloudClient] Response status: %d\n", resp.StatusCode)
-		fmt.Printf("[CloudClient] Response body: %s\n", string(body))
-	}
+	fmt.Printf("[CloudClient] Response status: %d, body length: %d\n", resp.StatusCode, len(body))
+	fmt.Printf("[CloudClient] Response body: %s\n", string(body))
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		fmt.Printf("[CloudClient] ✗ API error: %d - %s\n", resp.StatusCode, string(body))
 		return nil, fmt.Errorf("cloud API error: %d - %s", resp.StatusCode, string(body))
 	}
+
+	fmt.Printf("[CloudClient] ✓ API success: %d\n", resp.StatusCode)
 
 	var result map[string]interface{}
 	if err := json.Unmarshal(body, &result); err != nil {

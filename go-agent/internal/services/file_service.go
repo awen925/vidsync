@@ -2,11 +2,10 @@ package services
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 	"time"
 
@@ -126,6 +125,7 @@ type SnapshotMetadata struct {
 
 // WaitForScanCompletion waits for Syncthing folder to complete scanning
 // Polls status every 500ms up to maxWaitSeconds
+// Returns immediately when state becomes idle (scan complete)
 func (fs *FileService) WaitForScanCompletion(ctx context.Context, projectID string, maxWaitSeconds int) error {
 	fs.logger.Info("[FileService] Waiting for folder scan completion: %s", projectID)
 
@@ -133,6 +133,12 @@ func (fs *FileService) WaitForScanCompletion(ctx context.Context, projectID stri
 	pollInterval := 500 * time.Millisecond
 
 	for {
+		// Check timeout BEFORE polling (prevents infinite loop)
+		if time.Now().After(deadline) {
+			fs.logger.Warn("[FileService] Scan completion timeout after %d seconds", maxWaitSeconds)
+			return fmt.Errorf("scan completion timeout")
+		}
+
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -152,16 +158,10 @@ func (fs *FileService) WaitForScanCompletion(ctx context.Context, projectID stri
 		if ok {
 			fs.logger.Debug("[FileService] Folder state: %s", state)
 			if state != "scanning" && state != "syncing" {
-				// State is "idle" or other non-busy state
+				// State is "idle" or other non-busy state - EXIT IMMEDIATELY
 				fs.logger.Info("[FileService] Folder scan completed, state: %s", state)
 				return nil
 			}
-		}
-
-		// Check timeout
-		if time.Now().After(deadline) {
-			fs.logger.Warn("[FileService] Scan completion timeout after %d seconds", maxWaitSeconds)
-			return fmt.Errorf("scan completion timeout")
 		}
 
 		time.Sleep(pollInterval)
@@ -169,12 +169,13 @@ func (fs *FileService) WaitForScanCompletion(ctx context.Context, projectID stri
 }
 
 // GenerateSnapshot generates a snapshot of current project files and uploads to cloud
-// This implements the async event order:
+// NOTE: Caller (ProjectService) is responsible for calling WaitForScanCompletion first!
+// This implements the event order:
 // 1. Project created in database (done by caller)
 // 2. Syncthing folder created (done by caller)
-// 3. Wait for Syncthing folder scan to complete (this method)
-// 4. Browse files and create snapshot JSON
-// 5. Upload snapshot to Supabase storage
+// 3. Wait for Syncthing folder scan to complete (done by caller before calling this)
+// 4. Browse files and create snapshot JSON (this method - Step 1)
+// 5. Upload snapshot to Supabase storage (this method - Step 2)
 // Emits progress updates via progressTracker
 func (fs *FileService) GenerateSnapshot(ctx context.Context, projectID, accessToken string) (map[string]interface{}, error) {
 	fs.logger.Info("[FileService] Generating snapshot for project: %s", projectID)
@@ -183,41 +184,42 @@ func (fs *FileService) GenerateSnapshot(ctx context.Context, projectID, accessTo
 	fs.progressTracker.StartTracking(projectID)
 	defer fs.progressTracker.CleanupProject(projectID)
 
-	// Step 1: Wait for Syncthing folder to complete initial scan (max 2 minutes)
-	fs.logger.Debug("[FileService] Step 1: Waiting for Syncthing folder scan...")
-	fs.progressTracker.UpdateProgress(projectID, "waiting", 1, 0, 0, "Waiting for Syncthing folder scan to complete...")
-	err := fs.WaitForScanCompletion(ctx, projectID, 120)
-	if err != nil {
-		fs.logger.Error("[FileService] Failed waiting for scan completion: %v", err)
-		fs.progressTracker.FailSnapshot(projectID, fmt.Sprintf("Scan completion timeout: %v", err))
-		return nil, fmt.Errorf("scan completion timeout: %w", err)
-	}
+	// IMPORTANT: Caller must have already called WaitForScanCompletion before this!
+	// We assume the folder scan is already complete
 
-	// Step 2: Get folder status and path
-	fs.logger.Debug("[FileService] Step 2: Getting folder status...")
-	fs.progressTracker.UpdateProgress(projectID, "browsing", 2, 0, 0, "Getting folder status...")
-	status, err := fs.syncClient.GetFolderStatus(projectID)
+	// Step 1: Get folder config to retrieve path
+	fs.logger.Debug("[FileService] Step 1: Getting folder configuration...")
+	fs.progressTracker.UpdateProgress(projectID, "browsing", 1, 0, 0, "Getting folder configuration...")
+	folderConfig, err := fs.syncClient.GetFolderConfig(projectID)
 	if err != nil {
-		fs.logger.Error("[FileService] Failed to get folder status: %v", err)
-		fs.progressTracker.FailSnapshot(projectID, fmt.Sprintf("Failed to get folder status: %v", err))
+		fs.logger.Error("[FileService] Failed to get folder config: %v", err)
+		fs.progressTracker.FailSnapshot(projectID, fmt.Sprintf("Failed to get folder config: %v", err))
 		return nil, err
 	}
 
-	folderPath, ok := status["path"].(string)
+	folderPath, ok := folderConfig["path"].(string)
 	if !ok || folderPath == "" {
-		fs.logger.Error("[FileService] Could not determine folder path")
-		fs.progressTracker.FailSnapshot(projectID, "Folder path not available")
-		return nil, fmt.Errorf("folder path not available")
+		fs.logger.Error("[FileService] Could not determine folder path from config")
+		fs.progressTracker.FailSnapshot(projectID, "Folder path not available in config")
+		return nil, fmt.Errorf("folder path not available in config")
 	}
 
-	// Step 3: Browse files to create snapshot
-	fs.logger.Debug("[FileService] Step 3: Browsing files from folder: %s", folderPath)
-	fs.progressTracker.UpdateProgress(projectID, "browsing", 3, 0, 0, "Browsing files in folder...")
+	// Step 2: Browse files to create snapshot
+	fs.logger.Debug("[FileService] Step 2: Browsing files from folder: %s", folderPath)
+	fs.progressTracker.UpdateProgress(projectID, "browsing", 2, 0, 0, "Browsing files in folder...")
 	files, err := fs.syncClient.BrowseFiles(folderPath, 0) // Full depth for complete snapshot
 	if err != nil {
 		fs.logger.Error("[FileService] Failed to browse files: %v", err)
 		fs.progressTracker.FailSnapshot(projectID, fmt.Sprintf("Failed to browse files: %v", err))
 		return nil, err
+	}
+
+	// Step 3: Get folder status for sync metadata
+	fs.logger.Debug("[FileService] Step 3: Getting folder sync status...")
+	status, err := fs.syncClient.GetFolderStatus(projectID)
+	if err != nil {
+		fs.logger.Warn("[FileService] Could not get sync status: %v (non-critical)", err)
+		status = map[string]interface{}{} // Use empty status if unavailable
 	}
 
 	// Step 4: Build snapshot metadata
@@ -253,8 +255,11 @@ func (fs *FileService) GenerateSnapshot(ctx context.Context, projectID, accessTo
 	snapshotURL, err := fs.uploadSnapshotToCloud(ctx, projectID, snapshotJSON, accessToken)
 	if err != nil {
 		fs.logger.Warn("[FileService] Failed to upload snapshot to cloud: %v", err)
-		fs.progressTracker.FailSnapshot(projectID, fmt.Sprintf("Failed to upload snapshot: %v", err))
-		// Don't fail - local snapshot is valid, upload is optional
+		// IMPORTANT: Mark as completed even if upload fails
+		// Snapshot generation is successful, upload is optional
+		// This stops polling immediately and prevents continuous retry attempts
+		fs.progressTracker.CompleteSnapshot(projectID, "")
+		fs.logger.Info("[FileService] Snapshot generated (upload failed but local snapshot valid)")
 	} else {
 		fs.logger.Info("[FileService] Snapshot uploaded to: %s", snapshotURL)
 		fs.progressTracker.CompleteSnapshot(projectID, snapshotURL)
@@ -271,11 +276,12 @@ func (fs *FileService) GenerateSnapshot(ctx context.Context, projectID, accessTo
 	}, nil
 }
 
-// uploadSnapshotToCloud sends snapshot JSON to Supabase Storage via cloud API
-// The cloud API endpoint expects: POST /projects/{projectId}/snapshot
-// Body: { snapshot: <snapshot_json>, syncStatus: "completed" }
-// Authorization: Bearer <accessToken>
-// Implements retry logic: 3 attempts with exponential backoff (1s, 2s, 4s)
+// uploadSnapshotToCloud uploads snapshot directly to Supabase Storage then updates project via Cloud API
+// Flow:
+// 1. Compress snapshot JSON with gzip
+// 2. Upload to Supabase Storage (project-snapshots bucket)
+// 3. Get public URL from Supabase
+// 4. Update project snapshot_url via Cloud API (small request)
 func (fs *FileService) uploadSnapshotToCloud(ctx context.Context, projectID string, snapshotJSON []byte, accessToken string) (string, error) {
 	const maxRetries = 3
 	const initialBackoff = 1 * time.Second
@@ -313,61 +319,70 @@ func (fs *FileService) uploadSnapshotToCloud(ctx context.Context, projectID stri
 	return "", fmt.Errorf("upload failed after %d attempts: %w", maxRetries, lastErr)
 }
 
-// uploadSnapshotAttempt performs a single upload attempt
+// uploadSnapshotAttempt performs a single upload attempt:
+// 1. Compress JSON with gzip
+// 2. POST to Cloud API /projects/:projectId/snapshot with multipart form
+// 3. Cloud API handles upload to storage and metadata update atomically
 func (fs *FileService) uploadSnapshotAttempt(ctx context.Context, projectID string, snapshotJSON []byte, accessToken string) (string, error) {
-	endpoint := fmt.Sprintf("%s/projects/%s/snapshot", fs.cloudClient.GetBaseURL(), projectID)
-
-	// Parse the snapshot JSON to get its structure
-	var snapshotData interface{}
+	// Parse snapshot to extract metadata
+	var snapshotData map[string]interface{}
 	if err := json.Unmarshal(snapshotJSON, &snapshotData); err != nil {
 		return "", fmt.Errorf("failed to parse snapshot JSON: %w", err)
 	}
 
-	// Wrap snapshot in request format expected by cloud API
-	// { snapshot: <data>, syncStatus: "completed" }
-	requestBody := map[string]interface{}{
-		"snapshot":   snapshotData,
-		"syncStatus": "completed",
+	// Extract metadata from snapshot
+	fileCount := 0
+	totalSize := int64(0)
+
+	if fc, ok := snapshotData["fileCount"].(float64); ok {
+		fileCount = int(fc)
+	}
+	if ts, ok := snapshotData["totalSize"].(float64); ok {
+		totalSize = int64(ts)
 	}
 
-	requestJSON, err := json.Marshal(requestBody)
+	// Step 1: Compress snapshot with gzip
+	fs.logger.Debug("[FileService] Compressing snapshot for storage...")
+	compressedBuffer := bytes.Buffer{}
+	gzipWriter := gzip.NewWriter(&compressedBuffer)
+	if _, err := gzipWriter.Write(snapshotJSON); err != nil {
+		return "", fmt.Errorf("failed to compress snapshot: %w", err)
+	}
+	if err := gzipWriter.Close(); err != nil {
+		return "", fmt.Errorf("failed to close gzip writer: %w", err)
+	}
+
+	compressedSize := compressedBuffer.Len()
+	originalSize := len(snapshotJSON)
+	fs.logger.Info("[FileService] Compressed: %d → %d bytes (%.1f%%)", originalSize, compressedSize, float64(compressedSize)*100/float64(originalSize))
+
+	// Step 2: Upload to Cloud API with multipart form
+	// Cloud API will handle: upload to Supabase + update project metadata
+	fs.logger.Debug("[FileService] Uploading compressed snapshot to Cloud API...")
+	endpoint := fmt.Sprintf("/projects/%s/snapshot", projectID)
+
+	// Build form fields
+	formFields := map[string]string{
+		"fileCount": fmt.Sprintf("%d", fileCount),
+		"totalSize": fmt.Sprintf("%d", totalSize),
+	}
+
+	// Call Cloud API with multipart request
+	response, err := fs.cloudClient.PostMultipartWithAuth(endpoint, "file", compressedBuffer.Bytes(), formFields, accessToken)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal request: %w", err)
+		return "", fmt.Errorf("failed to upload snapshot to Cloud API: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, io.NopCloser(bytes.NewReader(requestJSON)))
-	if err != nil {
-		return "", err
+	// Extract snapshot URL from response
+	snapshotURL, ok := response["snapshotUrl"].(string)
+	if !ok {
+		return "", fmt.Errorf("missing snapshotUrl in Cloud API response")
 	}
 
-	// Set headers for JSON request
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", accessToken))
-	req.Header.Set("Content-Type", "application/json")
+	fs.logger.Info("[FileService] Snapshot stored at: %s", snapshotURL)
+	fs.logger.Info("[FileService] Cloud API automatically updated project metadata")
 
-	// Use http client to send request
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("upload request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("upload failed: %d - %s", resp.StatusCode, string(body))
-	}
-
-	// Parse response to get snapshot URL
-	var result map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("failed to parse upload response: %w", err)
-	}
-
-	if snapshotURL, ok := result["snapshotUrl"].(string); ok {
-		return snapshotURL, nil
-	}
-
-	return "", fmt.Errorf("no snapshot URL in response")
+	return snapshotURL, nil
 }
 
 // isRetryableError determines if an error should trigger a retry

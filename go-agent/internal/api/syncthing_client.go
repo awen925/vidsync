@@ -100,6 +100,11 @@ func (sc *SyncthingClient) GetFolderStatus(folderID string) (map[string]interfac
 	return sc.get(fmt.Sprintf("/rest/db/status?folder=%s", folderID))
 }
 
+// GetFolderConfig gets folder configuration (includes path)
+func (sc *SyncthingClient) GetFolderConfig(folderID string) (map[string]interface{}, error) {
+	return sc.get(fmt.Sprintf("/rest/config/folders/%s", folderID))
+}
+
 // FileInfo represents file metadata for snapshot
 type FileInfo struct {
 	Name        string    `json:"name"`
@@ -149,7 +154,9 @@ func (sc *SyncthingClient) BrowseFiles(folderPath string, maxDepth int) ([]FileI
 
 // RemoveFolder removes a folder from Syncthing
 func (sc *SyncthingClient) RemoveFolder(folderID string) error {
-	req, err := http.NewRequest("DELETE", sc.baseURL+"/rest/config/folders/"+folderID, nil)
+	endpoint := "/rest/config/folders/" + folderID
+	fmt.Printf("[SyncthingClient] DELETE %s\n", endpoint)
+	req, err := http.NewRequest("DELETE", sc.baseURL+endpoint, nil)
 	if err != nil {
 		return err
 	}
@@ -191,7 +198,9 @@ func (sc *SyncthingClient) AddDeviceToFolder(folderID, deviceID string) error {
 		return err
 	}
 
-	req, err := http.NewRequest("PUT", sc.baseURL+"/rest/config/folders/"+folderID, bytes.NewBuffer(data))
+	endpoint := "/rest/config/folders/" + folderID
+	fmt.Printf("[SyncthingClient] PUT %s payload: %s\n", endpoint, string(data))
+	req, err := http.NewRequest("PUT", sc.baseURL+endpoint, bytes.NewBuffer(data))
 	if err != nil {
 		return err
 	}
@@ -233,7 +242,9 @@ func (sc *SyncthingClient) RemoveDeviceFromFolder(folderID, deviceID string) err
 		return err
 	}
 
-	req, err := http.NewRequest("PUT", sc.baseURL+"/rest/config/folders/"+folderID, bytes.NewBuffer(data))
+	endpoint := "/rest/config/folders/" + folderID
+	fmt.Printf("[SyncthingClient] PUT %s payload: %s\n", endpoint, string(data))
+	req, err := http.NewRequest("PUT", sc.baseURL+endpoint, bytes.NewBuffer(data))
 	if err != nil {
 		return err
 	}
@@ -266,6 +277,7 @@ func (sc *SyncthingClient) post(endpoint string, payload interface{}) error {
 		if err != nil {
 			return err
 		}
+		fmt.Printf("[SyncthingClient] POST %s payload: %s\n", endpoint, string(data))
 		body = bytes.NewBuffer(data)
 	}
 
@@ -278,6 +290,7 @@ func (sc *SyncthingClient) post(endpoint string, payload interface{}) error {
 }
 
 func (sc *SyncthingClient) get(endpoint string) (map[string]interface{}, error) {
+	fmt.Printf("[SyncthingClient] GET %s\n", endpoint)
 	req, err := http.NewRequest("GET", sc.baseURL+endpoint, nil)
 	if err != nil {
 		return nil, err
@@ -292,6 +305,7 @@ func (sc *SyncthingClient) get(endpoint string) (map[string]interface{}, error) 
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
+	// fmt.Printf("[SyncthingClient] GET response: %s\n", string(resp))
 
 	return result, nil
 }
@@ -330,11 +344,13 @@ func (sc *SyncthingClient) doReq(req *http.Request, retried bool) ([]byte, error
 	}
 
 	fmt.Printf("[SyncthingClient] Response status: %d, body length: %d\n", resp.StatusCode, len(body))
+	// fmt.Printf("[SyncthingClient] Response body: %s\n", string(body))
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		fmt.Printf("[SyncthingClient] API error: %d - %s\n", resp.StatusCode, string(body))
+		fmt.Printf("[SyncthingClient] ✗ API error: %d - %s\n", resp.StatusCode, string(body))
 		return nil, fmt.Errorf("syncthing API error: %d - %s", resp.StatusCode, string(body))
 	}
 
+	fmt.Printf("[SyncthingClient] ✓ API success: %d\n", resp.StatusCode)
 	return body, nil
 }

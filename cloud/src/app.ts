@@ -51,7 +51,13 @@ const corsOptions = {
 app.use(cors(corsOptions));
 
 // JSON body parser with size limit
-app.use(express.json({ limit: '10mb' }));
+// Skip JSON parsing for multipart requests (let multer handle them)
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (req.is('multipart/form-data')) {
+    return next();
+  }
+  express.json({ limit: '10mb' })(req, res, next);
+});
 
 // Security headers middleware
 app.use((req: Request, res: Response, next: NextFunction) => {

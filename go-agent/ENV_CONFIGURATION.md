@@ -41,6 +41,67 @@ The Go Agent supports environment variable configuration for all key services. T
   export LOG_LEVEL=error
   ```
 
+### Supabase Configuration (Required for Snapshot Storage)
+
+**Variables**: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`
+
+#### SUPABASE_URL
+
+- **Description**: Your Supabase project URL
+- **Default**: Empty (must be configured for snapshot storage)
+- **Format**: `https://[project-id].supabase.co`
+- **Required**: Yes (for snapshot upload functionality)
+- **Example**:
+  ```bash
+  export SUPABASE_URL=https://my-project.supabase.co
+  ```
+
+#### SUPABASE_ANON_KEY
+
+- **Description**: Supabase public/anonymous key for storage operations
+- **Default**: Empty (must be configured for snapshot storage)
+- **Length**: ~40 characters, starts with `eyJ`
+- **Required**: Yes (for snapshot upload functionality)
+- **Security**: Safe to expose in client code (public key)
+- **Example**:
+  ```bash
+  export SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+  ```
+
+#### SUPABASE_SERVICE_ROLE_KEY
+
+- **Description**: Supabase service role key for admin operations
+- **Default**: Empty
+- **Length**: ~40 characters, starts with `eyJ`
+- **Required**: No (optional for admin operations)
+- **Security**: ⚠️ **KEEP SECRET** - Do not expose in client code
+- **Example**:
+  ```bash
+  export SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+  ```
+
+#### How to Get Supabase Credentials
+
+1. Go to [Supabase Dashboard](https://app.supabase.com)
+2. Select your project
+3. Click **Settings** → **API**
+4. Copy the values:
+   - **Project URL** → `SUPABASE_URL`
+   - **anon public** key → `SUPABASE_ANON_KEY`
+   - **service_role** secret → `SUPABASE_SERVICE_ROLE_KEY`
+
+#### Snapshot Storage Functionality
+
+When Supabase credentials are configured, the agent:
+- ✅ Compresses snapshots with gzip (reduces ~90% of size)
+- ✅ Uploads directly to Supabase Storage (bypasses API size limits)
+- ✅ Generates public URLs for snapshot access
+- ✅ Updates projects with snapshot metadata
+
+Without Supabase credentials:
+- ❌ Snapshot upload fails with "Supabase credentials not configured"
+- ❌ Project creation fails at snapshot generation step
+
 ---
 
 ## Configuration File (.env)
@@ -54,7 +115,12 @@ The `.env` file in the go-agent root directory provides default values that can 
 ```env
 CLOUD_URL=http://localhost:5000/api
 LOG_LEVEL=info
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=your-anon-key-here
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key-here
 ```
+
+**Template**: See `.env.example` for configuration template with comments
 
 ### Using .env File
 
@@ -86,6 +152,8 @@ export $(cat .env | xargs)
 3. **Hardcoded Defaults** (lowest priority)
    - Cloud URL: `http://localhost:5000/api`
    - Log Level: `info`
+   - Supabase URL: Empty (snapshot storage disabled)
+   - Supabase Anon Key: Empty (snapshot storage disabled)
 
 ---
 
@@ -203,6 +271,66 @@ cd ../go-agent
 ./vidsync-agent
 ```
 
+### Issue: "Supabase credentials not configured"
+
+**Symptom**:
+```
+[ERROR] [FileService] Non-retryable error, failing immediately: failed to upload to Supabase Storage: Supabase credentials not configured
+```
+
+**Cause**: `SUPABASE_URL` and/or `SUPABASE_ANON_KEY` environment variables not set
+
+**Solution**:
+
+1. Check if `.env` file exists:
+   ```bash
+   ls -la go-agent/.env
+   ```
+
+2. Verify Supabase credentials are in `.env`:
+   ```bash
+   grep SUPABASE go-agent/.env
+   ```
+
+3. If missing, copy from Supabase dashboard:
+   - Go to https://app.supabase.com/project/[your-project-id]/settings/api
+   - Copy "Project URL" and "anon public" key
+   - Update `.env`:
+     ```env
+     SUPABASE_URL=https://my-project.supabase.co
+     SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+     ```
+
+4. Restart the agent:
+   ```bash
+   pkill vidsync-agent
+   sleep 2
+   cd go-agent
+   ./vidsync-agent
+   ```
+
+5. Check startup logs:
+   ```bash
+   ./vidsync-agent 2>&1 | grep -E "Supabase|Storage"
+   ```
+
+   Expected:
+   ```
+   [DEBUG] Supabase config - URL: https://my-project.supabase.co, AnonKey: eyJh...nkey
+   [INFO] FileService configured with Supabase storage: https://my-project.supabase.co
+   ```
+
+### Issue: Snapshot upload fails with "Request Entity Too Large"
+
+**Symptom**:
+```
+[ERROR] Failed to upload snapshot: Request Entity Too Large
+```
+
+**Cause**: Supabase credentials not configured, falling back to direct Cloud API upload
+
+**Solution**: Configure Supabase credentials (see issue above)
+
 ### Issue: Changes not taking effect
 
 **Symptom**: Changed `.env` file but Go agent still using old values
@@ -261,6 +389,27 @@ REACT_APP_CLOUD_URL=http://localhost:5000/api
 REACT_APP_AGENT_URL=http://127.0.0.1:5001/api/v1
 ```
 
+### Supabase Environment
+
+**Variables**:
+```env
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
+**Required for**:
+- Snapshot storage (direct upload to Supabase Storage)
+- Gzip compression (reduces snapshot size 90%)
+- Bypassing Cloud API request size limits
+
+**Setup Steps**:
+1. Create Supabase project at https://supabase.com
+2. Create storage bucket named `project-snapshots`
+3. Set bucket policies to allow public read access
+4. Get credentials from Project Settings → API
+5. Add to `.env` in go-agent directory
+
 ---
 
 ## Production Deployment
@@ -314,10 +463,13 @@ spec:
 
 ## Summary
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `CLOUD_URL` | `http://localhost:5000/api` | Cloud API endpoint |
-| `LOG_LEVEL` | `info` | Logging verbosity |
+| Variable | Default | Purpose | Required |
+|----------|---------|---------|----------|
+| `CLOUD_URL` | `http://localhost:5000/api` | Cloud API endpoint | ✅ Yes |
+| `LOG_LEVEL` | `info` | Logging verbosity | ❌ No |
+| `SUPABASE_URL` | Empty | Supabase project URL | ✅ Yes (for snapshots) |
+| `SUPABASE_ANON_KEY` | Empty | Supabase public key | ✅ Yes (for snapshots) |
+| `SUPABASE_SERVICE_ROLE_KEY` | Empty | Supabase admin key | ❌ No |
 
 **Key Points**:
 - ✅ Environment variables override .env file and defaults
@@ -325,3 +477,4 @@ spec:
 - ✅ Changes require restart to take effect
 - ✅ All configuration is optional (defaults work for local dev)
 - ✅ Perfect for multi-environment deployments
+- ✅ Supabase credentials enable snapshot compression and direct storage upload

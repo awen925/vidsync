@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import multer from 'multer';
 import { authMiddleware } from '../../middleware/authMiddleware';
 import { supabase } from '../../lib/supabaseClient';
 import { getWebSocketService } from '../../services/webSocketService';
@@ -9,6 +10,14 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 const router = Router();
+
+// Configure multer for file uploads (specifically for snapshot endpoint)
+const uploadSnapshot = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 500 * 1024 * 1024, // 500MB max file size
+  },
+});
 
 // ============================================================================
 // CACHE: Sync status cache with TTL
@@ -2268,13 +2277,13 @@ router.post('/:projectId/generate-snapshot', authMiddleware, async (req: Request
 
 /**
  * POST /api/projects/:projectId/snapshot
- * Receive snapshot JSON from Go agent and store in Supabase Storage
+ * Receive gzip-compressed snapshot file from Go agent and store in Supabase Storage
+ * Go agent pre-compresses the file - Cloud API just uploads to storage and updates metadata
  * 
- * Request body:
- * {
- *   snapshot: { projectId, createdAt, files[], fileCount, totalSize, syncStatus },
- *   syncStatus: 'completed' | 'partial'
- * }
+ * Request: multipart/form-data
+ * - file: gzip binary data (already compressed by Go agent)
+ * - fileCount: number of files in snapshot
+ * - totalSize: total bytes in uncompressed snapshot
  * 
  * Response:
  * {
@@ -2286,25 +2295,14 @@ router.post('/:projectId/generate-snapshot', authMiddleware, async (req: Request
  *   totalSize: number
  * }
  */
-router.post('/:projectId/snapshot', authMiddleware, async (req: Request, res: Response) => {
+router.post('/:projectId/snapshot', authMiddleware, uploadSnapshot.single('file'), async (req: Request, res: Response) => {
   const projectId = req.params.projectId;
   const userId = (req as any).user.id;
   
   try {
     console.log(`[Snapshot:${projectId}] POST /snapshot received from Go agent`);
     
-    // STEP 1: Validate request and user authorization
-    const { snapshot, syncStatus } = req.body;
-    
-    if (!snapshot) {
-      return res.status(400).json({ error: 'Missing snapshot data' });
-    }
-    
-    if (!Array.isArray(snapshot.files)) {
-      return res.status(400).json({ error: 'snapshot.files must be array' });
-    }
-    
-    // Verify user is project owner
+    // STEP 1: Validate authorization and project existence
     const { data: project, error: projectErr } = await supabase
       .from('projects')
       .select('id, owner_id, name')
@@ -2323,29 +2321,28 @@ router.post('/:projectId/snapshot', authMiddleware, async (req: Request, res: Re
     
     console.log(`[Snapshot:${projectId}] ✅ User authorized as owner`);
     
-    // STEP 2: Parse and validate snapshot structure
-    console.log(`[Snapshot:${projectId}] Validating snapshot structure...`);
+    // STEP 2: Extract multipart form data
+    console.log(`[Snapshot:${projectId}] Extracting gzip file and metadata from request...`);
     
-    const fileCount = snapshot.fileCount || snapshot.files.length;
-    const totalSize = snapshot.totalSize || 0;
-    const createdAt = snapshot.createdAt || new Date().toISOString();
+    // Get file from request (Multer stores file in req.file)
+    const fileBuffer = (req as any).file?.buffer;
+    const fileCount = parseInt((req as any).body?.fileCount || '0', 10);
+    const totalSize = parseInt((req as any).body?.totalSize || '0', 10);
     
-    console.log(`[Snapshot:${projectId}] Files: ${fileCount}, Size: ${totalSize} bytes, Status: ${syncStatus}`);
+    if (!fileBuffer) {
+      console.error(`[Snapshot:${projectId}] ✗ Missing file in request`);
+      return res.status(400).json({ error: 'Missing gzip file in request' });
+    }
     
-    // STEP 3: Compress snapshot to gzip
-    console.log(`[Snapshot:${projectId}] Compressing snapshot...`);
+    if (!fileCount || fileCount <= 0) {
+      console.error(`[Snapshot:${projectId}] ✗ Invalid fileCount: ${fileCount}`);
+      return res.status(400).json({ error: 'fileCount must be positive number' });
+    }
     
-    const { promisify } = await import('util');
-    const zlib = await import('zlib');
-    const gzip = promisify(zlib.gzip);
+    console.log(`[Snapshot:${projectId}] Received gzip file: ${fileBuffer.length} bytes, Files: ${fileCount}, Original size: ${totalSize} bytes`);
     
-    const jsonString = JSON.stringify(snapshot, null, 2);
-    const compressedBuffer = await gzip(jsonString);
-    
-    console.log(`[Snapshot:${projectId}] Compressed: ${jsonString.length} → ${compressedBuffer.length} bytes`);
-    
-    // STEP 4: Upload to Supabase Storage
-    console.log(`[Snapshot:${projectId}] Uploading to Supabase Storage...`);
+    // STEP 3: Upload gzip file to Supabase Storage (already compressed by Go agent)
+    console.log(`[Snapshot:${projectId}] Uploading gzip file to Supabase Storage...`);
     
     const timestamp = Date.now();
     const filename = `snapshot_${timestamp}.json.gz`;
@@ -2354,7 +2351,7 @@ router.post('/:projectId/snapshot', authMiddleware, async (req: Request, res: Re
     
     const { data: uploadData, error: uploadErr } = await supabase.storage
       .from(bucket)
-      .upload(filePath, compressedBuffer, {
+      .upload(filePath, fileBuffer, {
         contentType: 'application/gzip',
         upsert: false,
       });
@@ -2366,7 +2363,7 @@ router.post('/:projectId/snapshot', authMiddleware, async (req: Request, res: Re
     
     console.log(`[Snapshot:${projectId}] ✅ Uploaded to storage: ${filePath}`);
     
-    // STEP 5: Generate public URL
+    // STEP 4: Generate public URL
     console.log(`[Snapshot:${projectId}] Generating public URL...`);
     
     const { data: publicUrlData } = supabase.storage
@@ -2377,7 +2374,7 @@ router.post('/:projectId/snapshot', authMiddleware, async (req: Request, res: Re
     
     console.log(`[Snapshot:${projectId}] Public URL: ${snapshotUrl}`);
     
-    // STEP 6: Update project table with snapshot metadata
+    // STEP 5: Update project table with snapshot metadata
     console.log(`[Snapshot:${projectId}] Updating project metadata in database...`);
     
     const updatePayload: any = {
@@ -2406,11 +2403,10 @@ router.post('/:projectId/snapshot', authMiddleware, async (req: Request, res: Re
     res.status(200).json({
       ok: true,
       snapshotUrl,
-      snapshotSize: compressedBuffer.length,
+      snapshotSize: fileBuffer.length,
       uploadedAt: new Date().toISOString(),
       fileCount,
       totalSize,
-      syncStatus,
       message: 'Snapshot uploaded successfully',
     });
     

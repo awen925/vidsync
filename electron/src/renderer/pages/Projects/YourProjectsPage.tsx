@@ -211,45 +211,77 @@ const YourProjectsPage: React.FC<YourProjectsPageProps> = ({ onSelectProject }) 
     return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
   };
 
-  // Poll for snapshot completion with exponential backoff and retry logic
+  // Poll for snapshot completion - stops polling when generation completes
   const pollForSnapshotCompletion = async (
     projectId: string,
     maxWaitSeconds: number = 300
   ): Promise<boolean> => {
     const pollStartTime = Date.now();
     const MAX_POLL_TIMEOUT = maxWaitSeconds * 1000;
-    let pollInterval = 1000; // Start with 1 second
-    const MAX_POLL_INTERVAL = 10000; // Cap at 10 seconds
+    const POLL_INTERVAL = 5000; // Fixed 5-second interval as requested
     let consecutiveErrors = 0;
-    const MAX_CONSECUTIVE_ERRORS = 3; // Fail if 3 consecutive errors
+    const MAX_CONSECUTIVE_ERRORS = 5; // Allow more errors before giving up
+    let pollTimer: NodeJS.Timeout | null = null;
 
-    while (Date.now() - pollStartTime < MAX_POLL_TIMEOUT) {
-      try {
-        const statusResponse = await (window as any).api.getProjectStatus(projectId);
-        consecutiveErrors = 0; // Reset error counter on success
+    return new Promise((resolve) => {
+      const executePoll = async () => {
+        try {
+          const statusResponse = await (window as any).api.getProjectStatus(projectId);
+          consecutiveErrors = 0; // Reset error counter on success
 
-        // Check if snapshot is ready by looking for snapshot_url in the response
-        if (statusResponse && statusResponse.snapshot_url) {
-          console.log('✓ Snapshot ready:', statusResponse.snapshot_url);
-          return true; // Success!
+          // Check if snapshot generation is complete
+          if (statusResponse) {
+            // Check for completion signal from backend
+            if (statusResponse.finalStatus === true) {
+              console.log('✓ Snapshot generation completed', statusResponse.progress);
+              if (pollTimer) clearTimeout(pollTimer);
+              return resolve(true);
+            }
+
+            // Fallback: check progress state directly
+            if (statusResponse.progress?.step === 'completed' || statusResponse.progress?.step === 'failed') {
+              console.log('✓ Snapshot generation completed:', statusResponse.progress?.step);
+              if (pollTimer) clearTimeout(pollTimer);
+              return resolve(statusResponse.progress?.step === 'completed');
+            }
+
+            console.debug('Snapshot still generating...', statusResponse.progress?.step);
+          }
+
+          // Check if we've exceeded timeout
+          if (Date.now() - pollStartTime >= MAX_POLL_TIMEOUT) {
+            console.warn('Snapshot polling timeout reached');
+            if (pollTimer) clearTimeout(pollTimer);
+            return resolve(false);
+          }
+
+          // Schedule next poll in 5 seconds
+          pollTimer = setTimeout(executePoll, POLL_INTERVAL);
+        } catch (statusErr) {
+          consecutiveErrors++;
+          console.debug(`Status check failed (${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS}):`, statusErr);
+
+          if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+            console.error('Too many consecutive polling errors, stopping');
+            if (pollTimer) clearTimeout(pollTimer);
+            return resolve(false);
+          }
+
+          // Check timeout before retry
+          if (Date.now() - pollStartTime >= MAX_POLL_TIMEOUT) {
+            console.warn('Snapshot polling timeout reached');
+            if (pollTimer) clearTimeout(pollTimer);
+            return resolve(false);
+          }
+
+          // Retry after 5 seconds
+          pollTimer = setTimeout(executePoll, POLL_INTERVAL);
         }
-      } catch (statusErr) {
-        consecutiveErrors++;
-        console.debug(`Status check failed (${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS}):`, statusErr);
+      };
 
-        // Fail if too many consecutive errors
-        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-          console.error('Too many consecutive polling errors, stopping');
-          return false;
-        }
-      }
-
-      // Wait before next poll, with exponential backoff
-      await new Promise(resolve => setTimeout(resolve, pollInterval));
-      pollInterval = Math.min(pollInterval * 1.5, MAX_POLL_INTERVAL); // Increase interval up to max
-    }
-
-    return false; // Timeout reached
+      // Start polling
+      executePoll();
+    });
   };
 
   const handleCreateProject = async () => {
